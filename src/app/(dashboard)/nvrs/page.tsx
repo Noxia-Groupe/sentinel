@@ -77,6 +77,8 @@ export default function NvrsPage() {
     serialNumber: "",
     model: "",
     location: "",
+    connectionMode: "ip" as "ip" | "p2p",
+    p2pSerial: "",
     adminUsername: "",
     adminPassword: "",
   });
@@ -97,11 +99,13 @@ export default function NvrsPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         name: form.name,
-        ip: form.ip,
+        ip: form.connectionMode === "ip" ? form.ip : undefined,
         port: form.port,
         serialNumber: form.serialNumber || undefined,
         model: form.model || undefined,
         location: form.location || undefined,
+        connectionMode: form.connectionMode,
+        p2pSerial: form.connectionMode === "p2p" ? form.p2pSerial : undefined,
         credentials:
           form.adminUsername && form.adminPassword
             ? [{ type: "admin", username: form.adminUsername, password: form.adminPassword }]
@@ -110,7 +114,7 @@ export default function NvrsPage() {
     });
     if (res.ok) {
       setCreateOpen(false);
-      setForm({ name: "", ip: "", port: 37777, serialNumber: "", model: "", location: "", adminUsername: "", adminPassword: "" });
+      setForm({ name: "", ip: "", port: 37777, serialNumber: "", model: "", location: "", connectionMode: "ip", p2pSerial: "", adminUsername: "", adminPassword: "" });
       toast.success("NVR ajouté avec succès");
       fetchNvrs();
     } else {
@@ -168,26 +172,69 @@ export default function NvrsPage() {
                   className="bg-[#080d24] border-[#132255] focus:border-[#0251a1]"
                 />
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Adresse IP *</Label>
-                  <Input
-                    placeholder="192.168.1.100"
-                    value={form.ip}
-                    onChange={(e) => setForm({ ...form, ip: e.target.value })}
-                    className="bg-[#080d24] border-[#132255] focus:border-[#0251a1]"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Port TCP</Label>
-                  <Input
-                    type="number"
-                    value={form.port}
-                    onChange={(e) => setForm({ ...form, port: Number(e.target.value) })}
-                    className="bg-[#080d24] border-[#132255] focus:border-[#0251a1]"
-                  />
+              {/* Mode de connexion */}
+              <div className="space-y-2">
+                <Label>Mode de connexion</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setForm({ ...form, connectionMode: "ip" })}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium border transition-all ${
+                      form.connectionMode === "ip"
+                        ? "bg-[#0251a1] border-[#0251a1] text-white"
+                        : "bg-[#080d24] border-[#132255] text-[#8896b4] hover:border-[#0251a1]/50"
+                    }`}
+                  >
+                    IP Directe
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setForm({ ...form, connectionMode: "p2p" })}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium border transition-all ${
+                      form.connectionMode === "p2p"
+                        ? "bg-[#0251a1] border-[#0251a1] text-white"
+                        : "bg-[#080d24] border-[#132255] text-[#8896b4] hover:border-[#0251a1]/50"
+                    }`}
+                  >
+                    P2P Dahua
+                  </button>
                 </div>
               </div>
+              {form.connectionMode === "ip" ? (
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Adresse IP *</Label>
+                    <Input
+                      placeholder="192.168.1.100"
+                      value={form.ip}
+                      onChange={(e) => setForm({ ...form, ip: e.target.value })}
+                      className="bg-[#080d24] border-[#132255] focus:border-[#0251a1]"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Port TCP</Label>
+                    <Input
+                      type="number"
+                      value={form.port}
+                      onChange={(e) => setForm({ ...form, port: Number(e.target.value) })}
+                      className="bg-[#080d24] border-[#132255] focus:border-[#0251a1]"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <Label>N° de série P2P *</Label>
+                  <Input
+                    placeholder="5H02A12PAX00001"
+                    value={form.p2pSerial}
+                    onChange={(e) => setForm({ ...form, p2pSerial: e.target.value })}
+                    className="bg-[#080d24] border-[#132255] focus:border-[#0251a1] font-mono"
+                  />
+                  <p className="text-xs text-[#8896b4]">
+                    Le NVR sera accessible via le cloud P2P Dahua (sans IP)
+                  </p>
+                </div>
+              )}
               <div className="space-y-2">
                 <Label>N° de série</Label>
                 <Input
@@ -242,7 +289,7 @@ export default function NvrsPage() {
               <Button
                 onClick={handleCreate}
                 className="w-full bg-[#0251a1] hover:bg-[#0363c2]"
-                disabled={!form.name || !form.ip}
+                disabled={!form.name || (form.connectionMode === "ip" ? !form.ip : !form.p2pSerial)}
               >
                 Créer l&apos;enregistreur
               </Button>
@@ -304,7 +351,9 @@ export default function NvrsPage() {
                     onClick={() => router.push(`/nvrs/${nvr.id}`)}
                   >
                     <TableCell className="font-medium text-[#dde1e4]">{nvr.name}</TableCell>
-                    <TableCell className="text-[#8896b4] font-mono text-sm">{nvr.ip}:{nvr.port}</TableCell>
+                    <TableCell className="text-[#8896b4] font-mono text-sm">
+                      {nvr.ip ? `${nvr.ip}:${nvr.port}` : `P2P: ${nvr.serialNumber}`}
+                    </TableCell>
                     <TableCell className="text-[#8896b4]">{nvr.model || "—"}</TableCell>
                     <TableCell>
                       <Badge

@@ -58,16 +58,20 @@ model VerificationToken {
 // Enregistreur NVR Dahua
 model Nvr {
   id             String         @id @default(cuid())
-  name           String         // Nom descriptif (ex: "NVR Entrepôt Lyon")
-  ip             String         // Adresse IP
+  name           String
+  ip             String?
   port           Int            @default(37777)
-  serialNumber   String?        @unique  // Numéro de série Dahua
-  model          String?        // Modèle (ex: DHI-NVR5216-16P-4KS2E)
-  location       String?        // Emplacement physique
-  notes          String?        // Notes libres
-  status         String         @default("unknown") // unknown, online, offline, error
-  lastSeen       DateTime?      // Dernière réception d'événement
-  webhookToken   String         @unique @default(cuid()) // Token unique pour le webhook Alarm Center
+  serialNumber   String?        @unique
+  model          String?
+  location       String?
+  notes          String?
+  // Mode de connexion : "ip" = direct IP, "p2p" = Dahua P2P
+  connectionMode String         @default("ip")
+  // Identifiant P2P (généralement le SN, ex: 5H02A12PAX00001)
+  p2pSerial      String?
+  status         String         @default("unknown")
+  lastSeen       DateTime?
+  webhookToken   String         @unique @default(cuid())
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
   credentials    NvrCredential[]

@@ -35,11 +35,25 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json();
-  const { name, ip, port, serialNumber, model, location, notes, credentials } = body;
+  const { name, ip, port, serialNumber, model, location, notes, connectionMode, p2pSerial, credentials } = body;
 
-  if (!name || !ip) {
+  if (!name) {
     return NextResponse.json(
-      { error: "Nom et IP sont requis" },
+      { error: "Le nom est requis" },
+      { status: 400 }
+    );
+  }
+
+  // Mode P2P : p2pSerial requis, pas d'IP. Mode IP : IP requise.
+  if (connectionMode !== "p2p" && !ip) {
+    return NextResponse.json(
+      { error: "L'adresse IP est requise (sauf en mode P2P)" },
+      { status: 400 }
+    );
+  }
+  if (connectionMode === "p2p" && !p2pSerial) {
+    return NextResponse.json(
+      { error: "Le numéro de série P2P est requis en mode P2P" },
       { status: 400 }
     );
   }
@@ -47,9 +61,11 @@ export async function POST(req: NextRequest) {
   const nvr = await prisma.nvr.create({
     data: {
       name,
-      ip,
+      ip: connectionMode === "p2p" ? null : ip,
       port: port || 37777,
       serialNumber,
+      connectionMode: connectionMode || "ip",
+      p2pSerial: connectionMode === "p2p" ? p2pSerial : null,
       model,
       location,
       notes,
