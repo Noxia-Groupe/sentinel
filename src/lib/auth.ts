@@ -5,9 +5,23 @@ import { prisma } from "./prisma";
 
 const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || "")
   .split(",")
-  .map((e) => e.trim().toLowerCase());
+  .map((e) => e.trim().toLowerCase())
+  .filter(Boolean);
 
-const issuer = process.env.AUTH_MICROSOFT_ENTRA_ID_ISSUER?.trim();
+// Entra ID publie son issuer SANS slash final
+// (ex: https://login.microsoftonline.com/<tenant>/v2.0). oauth4webapi compare la
+// valeur du document de découverte à celle configurée, caractère par caractère :
+// un slash final fait échouer la connexion. On normalise donc ici.
+const issuer = process.env.AUTH_MICROSOFT_ENTRA_ID_ISSUER?.trim().replace(/\/+$/, "");
+
+async function promoteAdmin(email?: string | null) {
+  if (!email || !ADMIN_EMAILS.includes(email.toLowerCase())) return;
+  // updateMany : ne lève pas si l'utilisateur n'existe pas encore.
+  await prisma.user.updateMany({
+    where: { email },
+    data: { role: "admin" },
+  });
+}
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter: PrismaAdapter(prisma),
@@ -22,16 +36,20 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     signIn: "/auth/signin",
     error: "/auth/error",
   },
-  callbacks: {
+  events: {
+    // Déclenché APRÈS la création/récupération de l'utilisateur en base, à la
+    // différence du callback `signIn` qui s'exécute avant : c'est le seul
+    // endroit où l'on peut écrire sur l'utilisateur dès la première connexion.
     async signIn({ user }) {
-      if (user.email && ADMIN_EMAILS.includes(user.email.toLowerCase())) {
-        await prisma.user.update({
-          where: { email: user.email },
-          data: { role: "admin" },
-        });
+      try {
+        await promoteAdmin(user.email);
+      } catch (error) {
+        // Ne jamais faire échouer une connexion valide sur l'attribution du rôle.
+        console.error("[auth] Échec de l'attribution du rôle admin", error);
       }
-      return true;
     },
+  },
+  callbacks: {
     async session({ session, user }) {
       if (session.user) {
         session.user.id = user.id;
@@ -39,7 +57,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           where: { id: user.id },
           select: { role: true },
         });
-        (session.user as unknown as Record<string, unknown>).role = dbUser?.role ?? "user";
+        session.user.role = dbUser?.role ?? "user";
       }
       return session;
     },
