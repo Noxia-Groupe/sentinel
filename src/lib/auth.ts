@@ -7,13 +7,15 @@ const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || "")
   .split(",")
   .map((e) => e.trim().toLowerCase());
 
+const issuer = process.env.AUTH_MICROSOFT_ENTRA_ID_ISSUER?.trim();
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter: PrismaAdapter(prisma),
   providers: [
     MicrosoftEntraID({
       clientId: process.env.AUTH_MICROSOFT_ENTRA_ID_ID!,
       clientSecret: process.env.AUTH_MICROSOFT_ENTRA_ID_SECRET!,
-      issuer: process.env.AUTH_MICROSOFT_ENTRA_ID_ISSUER,
+      ...(issuer ? { issuer } : {}),
     }),
   ],
   pages: {
@@ -22,7 +24,6 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   },
   callbacks: {
     async signIn({ user }) {
-      // Attribuer le rôle admin si l'email est dans la liste
       if (user.email && ADMIN_EMAILS.includes(user.email.toLowerCase())) {
         await prisma.user.update({
           where: { email: user.email },
@@ -34,7 +35,6 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     async session({ session, user }) {
       if (session.user) {
         session.user.id = user.id;
-        // Transmettre le rôle dans la session
         const dbUser = await prisma.user.findUnique({
           where: { id: user.id },
           select: { role: true },
