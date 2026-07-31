@@ -1,0 +1,100 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Utilisateurs via NextAuth / Microsoft Entra ID
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  accounts      Account[]
+  sessions      Session[]
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// Enregistreur NVR Dahua
+model Nvr {
+  id             String         @id @default(cuid())
+  name           String         // Nom descriptif (ex: "NVR Entrepôt Lyon")
+  ip             String         // Adresse IP
+  port           Int            @default(37777)
+  serialNumber   String?        @unique  // Numéro de série Dahua
+  model          String?        // Modèle (ex: DHI-NVR5216-16P-4KS2E)
+  location       String?        // Emplacement physique
+  notes          String?        // Notes libres
+  status         String         @default("unknown") // unknown, online, offline, error
+  lastSeen       DateTime?      // Dernière réception d'événement
+  webhookToken   String         @unique @default(cuid()) // Token unique pour le webhook Alarm Center
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  credentials    NvrCredential[]
+  events         NvrEvent[]
+}
+
+// Credentials chiffrés pour accès NVR
+model NvrCredential {
+  id              String   @id @default(cuid())
+  nvrId           String
+  nvr             Nvr      @relation(fields: [nvrId], references: [id], onDelete: Cascade)
+  type            String   // "admin" | "telesurveilleur"
+  username        String   // Nom d'utilisateur (stocké en clair)
+  encryptedPassword String // Mot de passe chiffré AES-256-GCM (Base64)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([nvrId, type])
+}
+
+// Événements reçus des NVR via Alarm Center
+model NvrEvent {
+  id        String   @id @default(cuid())
+  nvrId     String
+  nvr       Nvr      @relation(fields: [nvrId], references: [id], onDelete: Cascade)
+  type      String   // Type d'événement (alarm, motion, disk_error, etc.)
+  payload   Json     // Payload complet de l'événement
+  receivedAt DateTime @default(now())
+
+  @@index([nvrId, receivedAt])
+}

@@ -1,0 +1,41 @@
+services:
+  sentinel-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sentinel
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: sentinel
+    volumes:
+      - sentinel_pgdata:/var/lib/postgresql/data
+    networks:
+      - nginx-proxy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sentinel"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  sentinel-app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      sentinel-db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: "postgresql://sentinel:${DB_PASSWORD}@sentinel-db:5432/sentinel"
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      NEXTAUTH_URL: "https://sentinel.noxia-groupe.fr"
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
+      AUTH_MICROSOFT_ENTRA_ID_ID: ${AUTH_MICROSOFT_ENTRA_ID_ID}
+      AUTH_MICROSOFT_ENTRA_ID_SECRET: ${AUTH_MICROSOFT_ENTRA_ID_SECRET}
+      AUTH_MICROSOFT_ENTRA_ID_ISSUER: ${AUTH_MICROSOFT_ENTRA_ID_ISSUER}
+    networks:
+      - nginx-proxy
+
+volumes:
+  sentinel_pgdata:
+
+networks:
+  nginx-proxy:
+    external: true
