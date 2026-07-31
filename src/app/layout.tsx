@@ -1,21 +1,17 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Montserrat } from "next/font/google";
 import { Toaster } from "sonner";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const montserrat = Montserrat({
+  variable: "--font-sans",
   subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
+  weight: ["300", "400", "500", "600", "700", "800"],
 });
 
 export const metadata: Metadata = {
-  title: "SENTINEL — Centre de contrôle",
-  description: "Centre de contrôle des enregistreurs Dahua",
+  title: "SENTINEL — Centre de contrôle NVR",
+  description: "Centre opérationnel de gestion des enregistreurs Dahua — Noxia Groupe",
 };
 
 export default function RootLayout({
@@ -26,18 +22,18 @@ export default function RootLayout({
   return (
     <html
       lang="fr"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased dark`}
+      className={`${montserrat.variable} h-full antialiased dark`}
     >
-      <body className="min-h-full bg-zinc-950 flex flex-col">
+      <body className="min-h-full bg-[#000726] flex flex-col">
         {children}
         <Toaster
           theme="dark"
           position="top-right"
           toastOptions={{
             style: {
-              background: "#18181b",
-              border: "1px solid #27272a",
-              color: "#f4f4f5",
+              background: "#0d1537",
+              border: "1px solid rgba(177,185,192,0.15)",
+              color: "#dde1e4",
             },
           }}
         />

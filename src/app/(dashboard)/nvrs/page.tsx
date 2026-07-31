@@ -9,6 +9,7 @@ import {
   Pencil,
   Trash2,
   Copy,
+  Server,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -54,13 +55,6 @@ type NvrSummary = {
   credentials: { id: string; type: string; username: string }[];
 };
 
-const statusVariant: Record<string, "default" | "success" | "destructive" | "warning"> = {
-  online: "success",
-  offline: "destructive",
-  error: "destructive",
-  unknown: "default",
-};
-
 const statusLabel: Record<string, string> = {
   online: "En ligne",
   offline: "Hors ligne",
@@ -89,9 +83,7 @@ export default function NvrsPage() {
 
   const fetchNvrs = async () => {
     const res = await fetch("/api/nvrs");
-    if (res.ok) {
-      setNvrs(await res.json());
-    }
+    if (res.ok) setNvrs(await res.json());
     setLoading(false);
   };
 
@@ -112,33 +104,17 @@ export default function NvrsPage() {
         location: form.location || undefined,
         credentials:
           form.adminUsername && form.adminPassword
-            ? [
-                {
-                  type: "admin",
-                  username: form.adminUsername,
-                  password: form.adminPassword,
-                },
-              ]
+            ? [{ type: "admin", username: form.adminUsername, password: form.adminPassword }]
             : undefined,
       }),
     });
-
     if (res.ok) {
       setCreateOpen(false);
-      setForm({
-        name: "",
-        ip: "",
-        port: 37777,
-        serialNumber: "",
-        model: "",
-        location: "",
-        adminUsername: "",
-        adminPassword: "",
-      });
+      setForm({ name: "", ip: "", port: 37777, serialNumber: "", model: "", location: "", adminUsername: "", adminPassword: "" });
       toast.success("NVR ajouté avec succès");
       fetchNvrs();
     } else {
-      toast.error("Erreur lors de l'ajout du NVR");
+      toast.error("Erreur lors de l&apos;ajout");
     }
   };
 
@@ -153,8 +129,7 @@ export default function NvrsPage() {
   };
 
   const copyWebhookUrl = (token: string) => {
-    const url = `${window.location.origin}/api/webhooks/dahua/${token}`;
-    navigator.clipboard.writeText(url);
+    navigator.clipboard.writeText(`${window.location.origin}/api/webhooks/dahua/${token}`);
     toast.success("URL du webhook copiée");
   };
 
@@ -167,21 +142,19 @@ export default function NvrsPage() {
 
   return (
     <div className="p-6 lg:p-8 space-y-6">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-zinc-100">
-            Enregistreurs
-          </h1>
-          <p className="text-zinc-400 mt-1">
-            Gérez vos NVR Dahua et leurs accès
-          </p>
+          <p className="text-xs font-semibold tracking-[0.2em] text-[#0251a1] uppercase mb-1">Sentinel</p>
+          <h1 className="text-2xl font-bold tracking-tight text-[#dde1e4]">Enregistreurs</h1>
+          <p className="text-[#8896b4] mt-1 text-sm">Gérez vos NVR Dahua et leurs accès</p>
         </div>
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-          <DialogTrigger className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 bg-blue-600 text-white hover:bg-blue-700 h-10 px-4 py-2">
-            <Plus className="mr-2 h-4 w-4" />
+          <DialogTrigger className="inline-flex items-center gap-2 rounded-lg bg-[#0251a1] hover:bg-[#0363c2] text-white font-medium text-sm px-4 py-2.5 transition-all duration-200 hover:shadow-lg hover:shadow-[#0251a1]/25">
+            <Plus className="h-4 w-4" />
             Ajouter un NVR
           </DialogTrigger>
-          <DialogContent className="sm:max-w-md bg-zinc-900 border-zinc-800 text-zinc-100">
+          <DialogContent className="sm:max-w-md border-[#132255] bg-[#0d1537] text-[#dde1e4]">
             <DialogHeader>
               <DialogTitle>Nouvel enregistreur</DialogTitle>
             </DialogHeader>
@@ -192,7 +165,7 @@ export default function NvrsPage() {
                   placeholder="NVR Entrepôt Lyon"
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  className="bg-zinc-800 border-zinc-700"
+                  className="bg-[#080d24] border-[#132255] focus:border-[#0251a1]"
                 />
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -202,7 +175,7 @@ export default function NvrsPage() {
                     placeholder="192.168.1.100"
                     value={form.ip}
                     onChange={(e) => setForm({ ...form, ip: e.target.value })}
-                    className="bg-zinc-800 border-zinc-700"
+                    className="bg-[#080d24] border-[#132255] focus:border-[#0251a1]"
                   />
                 </div>
                 <div className="space-y-2">
@@ -210,10 +183,8 @@ export default function NvrsPage() {
                   <Input
                     type="number"
                     value={form.port}
-                    onChange={(e) =>
-                      setForm({ ...form, port: Number(e.target.value) })
-                    }
-                    className="bg-zinc-800 border-zinc-700"
+                    onChange={(e) => setForm({ ...form, port: Number(e.target.value) })}
+                    className="bg-[#080d24] border-[#132255] focus:border-[#0251a1]"
                   />
                 </div>
               </div>
@@ -222,10 +193,8 @@ export default function NvrsPage() {
                 <Input
                   placeholder="ex: 5H02A12PAX00001"
                   value={form.serialNumber}
-                  onChange={(e) =>
-                    setForm({ ...form, serialNumber: e.target.value })
-                  }
-                  className="bg-zinc-800 border-zinc-700"
+                  onChange={(e) => setForm({ ...form, serialNumber: e.target.value })}
+                  className="bg-[#080d24] border-[#132255] focus:border-[#0251a1]"
                 />
               </div>
               <div className="space-y-2">
@@ -234,7 +203,7 @@ export default function NvrsPage() {
                   placeholder="ex: DHI-NVR5216-16P-4KS2E"
                   value={form.model}
                   onChange={(e) => setForm({ ...form, model: e.target.value })}
-                  className="bg-zinc-800 border-zinc-700"
+                  className="bg-[#080d24] border-[#132255] focus:border-[#0251a1]"
                 />
               </div>
               <div className="space-y-2">
@@ -242,26 +211,20 @@ export default function NvrsPage() {
                 <Input
                   placeholder="ex: Local technique RDC"
                   value={form.location}
-                  onChange={(e) =>
-                    setForm({ ...form, location: e.target.value })
-                  }
-                  className="bg-zinc-800 border-zinc-700"
+                  onChange={(e) => setForm({ ...form, location: e.target.value })}
+                  className="bg-[#080d24] border-[#132255] focus:border-[#0251a1]"
                 />
               </div>
-              <div className="border-t border-zinc-800 pt-4">
-                <p className="text-sm font-medium mb-3">
-                  Compte administrateur
-                </p>
+              <div className="border-t border-[#132255] pt-4">
+                <p className="text-sm font-medium mb-3">Compte administrateur</p>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Utilisateur</Label>
                     <Input
                       placeholder="admin"
                       value={form.adminUsername}
-                      onChange={(e) =>
-                        setForm({ ...form, adminUsername: e.target.value })
-                      }
-                      className="bg-zinc-800 border-zinc-700"
+                      onChange={(e) => setForm({ ...form, adminUsername: e.target.value })}
+                      className="bg-[#080d24] border-[#132255] focus:border-[#0251a1]"
                     />
                   </div>
                   <div className="space-y-2">
@@ -270,17 +233,15 @@ export default function NvrsPage() {
                       type="password"
                       placeholder="••••••••"
                       value={form.adminPassword}
-                      onChange={(e) =>
-                        setForm({ ...form, adminPassword: e.target.value })
-                      }
-                      className="bg-zinc-800 border-zinc-700"
+                      onChange={(e) => setForm({ ...form, adminPassword: e.target.value })}
+                      className="bg-[#080d24] border-[#132255] focus:border-[#0251a1]"
                     />
                   </div>
                 </div>
               </div>
               <Button
                 onClick={handleCreate}
-                className="w-full bg-blue-600 hover:bg-blue-700"
+                className="w-full bg-[#0251a1] hover:bg-[#0363c2]"
                 disabled={!form.name || !form.ip}
               >
                 Créer l&apos;enregistreur
@@ -290,93 +251,69 @@ export default function NvrsPage() {
         </Dialog>
       </div>
 
-      <div className="flex items-center gap-4">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500" />
-          <Input
-            placeholder="Rechercher..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-9 bg-zinc-900 border-zinc-800"
-          />
-        </div>
+      {/* Search */}
+      <div className="relative max-w-sm">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#8896b4]" />
+        <Input
+          placeholder="Rechercher..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="pl-9 bg-[#0a1130] border-[#132255] focus:border-[#0251a1] text-[#dde1e4]"
+        />
       </div>
 
-      <Card className="border-zinc-800 bg-zinc-900/50">
+      {/* Table */}
+      <Card className="border-[#132255] bg-[#0a1130]/60 backdrop-blur-sm overflow-hidden">
         <CardContent className="p-0">
           <Table>
             <TableHeader>
-              <TableRow className="border-zinc-800 hover:bg-transparent">
-                <TableHead className="text-zinc-400">Nom</TableHead>
-                <TableHead className="text-zinc-400">IP</TableHead>
-                <TableHead className="text-zinc-400">Modèle</TableHead>
-                <TableHead className="text-zinc-400">Statut</TableHead>
-                <TableHead className="text-zinc-400 w-12"></TableHead>
+              <TableRow className="border-[#132255] hover:bg-transparent">
+                <TableHead className="text-[#8896b4] font-medium">Nom</TableHead>
+                <TableHead className="text-[#8896b4] font-medium">IP</TableHead>
+                <TableHead className="text-[#8896b4] font-medium">Modèle</TableHead>
+                <TableHead className="text-[#8896b4] font-medium">Statut</TableHead>
+                <TableHead className="text-[#8896b4] font-medium w-12"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading ? (
                 Array.from({ length: 3 }).map((_, i) => (
-                  <TableRow key={i} className="border-zinc-800">
-                    <TableCell>
-                      <Skeleton className="h-5 w-32 bg-zinc-800" />
-                    </TableCell>
-                    <TableCell>
-                      <Skeleton className="h-5 w-24 bg-zinc-800" />
-                    </TableCell>
-                    <TableCell>
-                      <Skeleton className="h-5 w-40 bg-zinc-800" />
-                    </TableCell>
-                    <TableCell>
-                      <Skeleton className="h-5 w-16 bg-zinc-800" />
-                    </TableCell>
-                    <TableCell>
-                      <Skeleton className="h-8 w-8 bg-zinc-800" />
-                    </TableCell>
+                  <TableRow key={i} className="border-[#132255]">
+                    <TableCell><Skeleton className="h-5 w-32 bg-[#132255]" /></TableCell>
+                    <TableCell><Skeleton className="h-5 w-24 bg-[#132255]" /></TableCell>
+                    <TableCell><Skeleton className="h-5 w-40 bg-[#132255]" /></TableCell>
+                    <TableCell><Skeleton className="h-5 w-16 bg-[#132255]" /></TableCell>
+                    <TableCell><Skeleton className="h-8 w-8 bg-[#132255]" /></TableCell>
                   </TableRow>
                 ))
               ) : filtered.length === 0 ? (
-                <TableRow className="border-zinc-800">
-                  <TableCell
-                    colSpan={5}
-                    className="text-center py-12 text-zinc-500"
-                  >
-                    {search
-                      ? "Aucun résultat"
-                      : "Aucun enregistreur. Ajoutez votre premier NVR."}
+                <TableRow className="border-[#132255]">
+                  <TableCell colSpan={5} className="text-center py-16 text-[#8896b4]">
+                    <Server className="h-10 w-10 mx-auto mb-3 opacity-20" />
+                    <p className="text-sm">{search ? "Aucun résultat" : "Aucun enregistreur"}</p>
+                    <p className="text-xs mt-1 text-[#8896b4]/60">
+                      {search ? "Essayez un autre terme" : "Ajoutez votre premier NVR"}
+                    </p>
                   </TableCell>
                 </TableRow>
               ) : (
                 filtered.map((nvr) => (
                   <TableRow
                     key={nvr.id}
-                    className="border-zinc-800 cursor-pointer hover:bg-zinc-800/50"
+                    className="border-[#132255] cursor-pointer hover:bg-[#132255]/50 transition-colors"
                     onClick={() => router.push(`/nvrs/${nvr.id}`)}
                   >
-                    <TableCell className="font-medium text-zinc-100">
-                      {nvr.name}
-                    </TableCell>
-                    <TableCell className="text-zinc-400 font-mono text-sm">
-                      {nvr.ip}:{nvr.port}
-                    </TableCell>
-                    <TableCell className="text-zinc-400">
-                      {nvr.model || "—"}
-                    </TableCell>
+                    <TableCell className="font-medium text-[#dde1e4]">{nvr.name}</TableCell>
+                    <TableCell className="text-[#8896b4] font-mono text-sm">{nvr.ip}:{nvr.port}</TableCell>
+                    <TableCell className="text-[#8896b4]">{nvr.model || "—"}</TableCell>
                     <TableCell>
                       <Badge
-                        variant={
-                          statusVariant[nvr.status] === "success"
-                            ? "default"
-                            : statusVariant[nvr.status] === "destructive"
-                            ? "destructive"
-                            : "secondary"
-                        }
                         className={
                           nvr.status === "online"
-                            ? "bg-green-500/10 text-green-400 hover:bg-green-500/20"
+                            ? "bg-green-500/10 text-green-400 border-green-500/20"
                             : nvr.status === "offline"
-                            ? "bg-red-500/10 text-red-400"
-                            : "bg-zinc-500/10 text-zinc-400"
+                            ? "bg-red-500/10 text-red-400 border-red-500/20"
+                            : "bg-[#8896b4]/10 text-[#8896b4] border-[#8896b4]/20"
                         }
                       >
                         {statusLabel[nvr.status] || nvr.status}
@@ -384,27 +321,20 @@ export default function NvrsPage() {
                     </TableCell>
                     <TableCell onClick={(e) => e.stopPropagation()}>
                       <DropdownMenu>
-                        <DropdownMenuTrigger className="inline-flex items-center justify-center h-8 w-8 rounded-md hover:bg-zinc-800">
-                          <MoreHorizontal className="h-4 w-4 text-zinc-400" />
+                        <DropdownMenuTrigger className="inline-flex items-center justify-center h-8 w-8 rounded-md hover:bg-[#132255] text-[#8896b4]">
+                          <MoreHorizontal className="h-4 w-4" />
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem
-                            onClick={() => router.push(`/nvrs/${nvr.id}`)}
-                          >
+                        <DropdownMenuContent align="end" className="border-[#132255] bg-[#0d1537]">
+                          <DropdownMenuItem onClick={() => router.push(`/nvrs/${nvr.id}`)}>
                             <Pencil className="mr-2 h-4 w-4" />
                             Détails
                           </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() => copyWebhookUrl(nvr.webhookToken)}
-                          >
+                          <DropdownMenuItem onClick={() => copyWebhookUrl(nvr.webhookToken)}>
                             <Copy className="mr-2 h-4 w-4" />
                             Copier URL webhook
                           </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            className="text-red-400"
-                            onClick={() => setDeleteId(nvr.id)}
-                          >
+                          <DropdownMenuSeparator className="bg-[#132255]" />
+                          <DropdownMenuItem className="text-red-400" onClick={() => setDeleteId(nvr.id)}>
                             <Trash2 className="mr-2 h-4 w-4" />
                             Supprimer
                           </DropdownMenuItem>
@@ -419,21 +349,17 @@ export default function NvrsPage() {
         </CardContent>
       </Card>
 
-      {/* Delete Confirmation */}
-      <Dialog
-        open={!!deleteId}
-        onOpenChange={(open) => !open && setDeleteId(null)}
-      >
-        <DialogContent className="sm:max-w-sm bg-zinc-900 border-zinc-800 text-zinc-100">
+      {/* Delete Dialog */}
+      <Dialog open={!!deleteId} onOpenChange={(open) => !open && setDeleteId(null)}>
+        <DialogContent className="sm:max-w-sm border-[#132255] bg-[#0d1537] text-[#dde1e4]">
           <DialogHeader>
             <DialogTitle>Confirmer la suppression</DialogTitle>
           </DialogHeader>
-          <p className="text-zinc-400 text-sm">
-            Cette action est irréversible. Toutes les données associées à ce NVR
-            seront supprimées.
+          <p className="text-[#8896b4] text-sm">
+            Cette action est irréversible. Toutes les données associées seront supprimées.
           </p>
           <div className="flex justify-end gap-3 mt-4">
-            <Button variant="secondary" onClick={() => setDeleteId(null)}>
+            <Button variant="secondary" onClick={() => setDeleteId(null)} className="bg-[#132255] hover:bg-[#1a2d66]">
               Annuler
             </Button>
             <Button variant="destructive" onClick={handleDelete}>

@@ -1,12 +1,11 @@
+import Image from "next/image";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Shield } from "lucide-react";
 import { SignInButton } from "./signin-button";
 
 const ERROR_MESSAGES: Record<string, string> = {
-  AccessDenied: "Accès refusé. Votre compte Microsoft n'est pas autorisé à accéder à SENTINEL.",
-  Configuration: "Configuration du fournisseur d'identité invalide. Contactez l'administrateur.",
-  OAuthAccountNotLinked:
-    "Cette adresse e-mail est déjà associée à un autre mode de connexion.",
+  AccessDenied: "Accès refusé. Votre compte Microsoft n'est pas autorisé.",
+  Configuration: "Configuration du fournisseur d'identité invalide.",
+  OAuthAccountNotLinked: "Cette adresse e-mail est déjà associée à un autre mode de connexion.",
 };
 
 export default async function SignIn({
@@ -17,30 +16,50 @@ export default async function SignIn({
   const { error, callbackUrl } = await searchParams;
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-zinc-950 p-4">
-      <Card className="w-full max-w-md border-zinc-800 bg-zinc-900">
-        <CardHeader className="text-center space-y-4">
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-blue-500/10">
-            <Shield className="h-8 w-8 text-blue-400" />
+    <div className="min-h-screen flex flex-col items-center justify-center bg-[#000726] p-4 relative overflow-hidden">
+      {/* Fond animé subtil */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute -top-1/2 -left-1/4 w-[800px] h-[800px] rounded-full bg-[#0251a1]/5 blur-3xl animate-pulse" />
+        <div className="absolute -bottom-1/2 -right-1/4 w-[600px] h-[600px] rounded-full bg-[#0251a1]/3 blur-3xl animate-pulse delay-1000" />
+      </div>
+
+      <Card className="relative w-full max-w-md border-[#132255] bg-[#0a1130]/80 backdrop-blur-xl shadow-2xl shadow-[#0251a1]/10">
+        <CardHeader className="text-center space-y-6 pb-4">
+          {/* Logo Noxia Groupe */}
+          <div className="mx-auto w-48 h-12 relative">
+            <Image
+              src="/brand/logos/NOXIA GROUPE BLANC.jpg"
+              alt="Noxia Groupe"
+              fill
+              className="object-contain"
+              priority
+            />
           </div>
-          <div>
-            <CardTitle className="text-2xl font-bold tracking-tight text-white">
+          <div className="space-y-2">
+            <CardTitle className="text-3xl font-extrabold tracking-wider text-[#dde1e4]">
               SENTINEL
             </CardTitle>
-            <CardDescription className="text-zinc-400 mt-2">
-              Centre de contrôle des enregistreurs Dahua
+            <CardDescription className="text-[#8896b4] text-sm">
+              Centre opérationnel de vidéosurveillance
             </CardDescription>
           </div>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-5 pb-8">
           {error && (
-            <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
+            <div className="rounded-lg border border-red-500/20 bg-red-500/5 px-4 py-3 text-sm text-red-300">
               {ERROR_MESSAGES[error] ?? "La connexion a échoué. Veuillez réessayer."}
-            </p>
+            </div>
           )}
           <SignInButton callbackUrl={callbackUrl ?? "/"} />
+          <p className="text-center text-xs text-[#8896b4]">
+            Connexion réservée aux membres Noxia Groupe
+          </p>
         </CardContent>
       </Card>
+
+      <p className="mt-8 text-xs text-[#8896b4]/50">
+        © Noxia Groupe — Tous droits réservés
+      </p>
     </div>
   );
 }

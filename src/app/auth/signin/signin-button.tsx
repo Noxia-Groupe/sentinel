@@ -7,16 +7,15 @@ export function SignInButton({ callbackUrl }: { callbackUrl: string }) {
   return (
     <Button
       onClick={() => signIn("microsoft-entra-id", { callbackUrl })}
-      className="w-full bg-blue-600 hover:bg-blue-700 text-white"
-      size="lg"
+      className="w-full bg-[#0251a1] hover:bg-[#0363c2] text-white font-medium tracking-wide h-12 rounded-lg transition-all duration-300 hover:shadow-lg hover:shadow-[#0251a1]/25"
     >
-      <svg className="mr-2 h-5 w-5" viewBox="0 0 21 21" fill="currentColor">
-        <rect x="1" y="1" width="9" height="9" fill="currentColor" />
-        <rect x="11" y="1" width="9" height="9" fill="currentColor" />
-        <rect x="1" y="11" width="9" height="9" fill="currentColor" />
-        <rect x="11" y="11" width="9" height="9" fill="currentColor" />
+      <svg className="mr-3 h-5 w-5" viewBox="0 0 21 21" fill="currentColor">
+        <rect x="1" y="1" width="9" height="9" />
+        <rect x="11" y="1" width="9" height="9" />
+        <rect x="1" y="11" width="9" height="9" />
+        <rect x="11" y="11" width="9" height="9" />
       </svg>
-      Connexion avec Microsoft
+      Connexion Microsoft
     </Button>
   );
 }

@@ -83,38 +83,39 @@
   --sidebar-ring: oklch(0.708 0 0);
 }
 
+/* Noxia Group Dark Theme — bleu nuit profond */
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --background: #000726;
+  --foreground: #dde1e4;
+  --card: #0a1130;
+  --card-foreground: #dde1e4;
+  --popover: #0d1537;
+  --popover-foreground: #dde1e4;
+  --primary: #0251a1;
+  --primary-foreground: #ffffff;
+  --secondary: #111d44;
+  --secondary-foreground: #dde1e4;
+  --muted: #0d1537;
+  --muted-foreground: #8896b4;
+  --accent: #132255;
+  --accent-foreground: #dde1e4;
+  --destructive: #ef4444;
+  --border: rgba(177, 185, 192, 0.12);
+  --input: rgba(177, 185, 192, 0.15);
+  --ring: #0251a1;
+  --chart-1: #0251a1;
+  --chart-2: #b1b9c0;
+  --chart-3: #8896b4;
+  --chart-4: #dde1e4;
+  --chart-5: #ffd700;
+  --sidebar: #080d24;
+  --sidebar-foreground: #dde1e4;
+  --sidebar-primary: #0251a1;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #132255;
+  --sidebar-accent-foreground: #dde1e4;
+  --sidebar-border: rgba(177, 185, 192, 0.1);
+  --sidebar-ring: #0251a1;
 }
 
 @layer base {
@@ -123,8 +124,24 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
   html {
     @apply font-sans;
   }
+}
+
+/* Scrollbar Noxia */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #000726;
+}
+::-webkit-scrollbar-thumb {
+  background: #132255;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #0251a1;
 }
