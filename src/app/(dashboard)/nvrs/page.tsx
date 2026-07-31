@@ -9,12 +9,11 @@ import {
   Pencil,
   Trash2,
   Copy,
-  ExternalLink,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -38,13 +37,6 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 
@@ -104,7 +96,7 @@ export default function NvrsPage() {
   };
 
   useEffect(() => {
-    fetchNvrs();
+    void fetchNvrs();
   }, []);
 
   const handleCreate = async () => {
@@ -291,7 +283,7 @@ export default function NvrsPage() {
                 className="w-full bg-blue-600 hover:bg-blue-700"
                 disabled={!form.name || !form.ip}
               >
-                Créer l'enregistreur
+                Créer l&apos;enregistreur
               </Button>
             </div>
           </DialogContent>

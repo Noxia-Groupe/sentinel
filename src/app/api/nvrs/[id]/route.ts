@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import type { NvrCredential } from "@/generated/prisma/client";
-import { encrypt, decrypt } from "@/lib/crypto";
+import { decrypt } from "@/lib/crypto";
 
 // GET /api/nvrs/[id] — Détail NVR + déchiffrement des mots de passe
 export async function GET(

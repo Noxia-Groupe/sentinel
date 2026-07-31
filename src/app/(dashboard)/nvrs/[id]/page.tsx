@@ -8,7 +8,6 @@ import {
   Eye,
   EyeOff,
   RefreshCw,
-  Power,
   Settings,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -55,7 +54,7 @@ type NvrDetail = {
   lastSeen: string | null;
   webhookToken: string;
   credentials: Credential[];
-  events: { id: string; type: string; payload: any; receivedAt: string }[];
+  events: { id: string; type: string; payload: Record<string, unknown>; receivedAt: string }[];
   createdAt: string;
   updatedAt: string;
 };
@@ -71,14 +70,12 @@ export default function NvrDetailPage() {
 
   const fetchNvr = useCallback(async () => {
     const res = await fetch(`/api/nvrs/${params.id}`);
-    if (res.ok) {
-      setNvr(await res.json());
-    }
+    if (res.ok) setNvr(await res.json());
     setLoading(false);
   }, [params.id]);
 
   useEffect(() => {
-    fetchNvr();
+    void fetchNvr();
   }, [fetchNvr]);
 
   const copyToClipboard = (text: string, label: string) => {
@@ -256,7 +253,7 @@ export default function NvrDetailPage() {
         <TabsContent value="credentials" className="space-y-6">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-medium text-zinc-100">
-              Comptes d'accès
+              Comptes d&apos;accès
             </h2>
             <Dialog open={addCredOpen} onOpenChange={setAddCredOpen}>
               <DialogTrigger className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 h-9 px-4 py-2">
@@ -454,13 +451,13 @@ export default function NvrDetailPage() {
                   Configuration Dahua
                 </p>
                 <ol className="text-zinc-400 text-sm space-y-1 list-decimal list-inside">
-                  <li>Accédez à l'interface web du NVR</li>
+                  <li>Accédez à l&apos;interface web du NVR</li>
                   <li>
-                    Allez dans <strong>Configuration → Réseau → Centre d'alarme</strong>
+                    Allez dans <strong>Configuration → Réseau → Centre d&apos;alarme</strong>
                   </li>
-                  <li>Ajoutez l'URL ci-dessus comme destination</li>
+                  <li>Ajoutez l&apos;URL ci-dessus comme destination</li>
                   <li>
-                    Sélectionnez les types d'événements à remonter (alarmes,
+                    Sélectionnez les types d&apos;événements à remonter (alarmes,
                     disque, connexion, etc.)
                   </li>
                 </ol>

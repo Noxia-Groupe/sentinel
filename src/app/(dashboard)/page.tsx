@@ -70,7 +70,7 @@ export default async function DashboardPage() {
             <div className="text-3xl font-bold text-amber-400">
               {eventsToday}
             </div>
-            <p className="text-xs text-zinc-500 mt-1">Aujourd'hui</p>
+            <p className="text-xs text-zinc-500 mt-1">Aujourd&apos;hui</p>
           </CardContent>
         </Card>
       </div>
