@@ -14,6 +14,12 @@ import {
   snapshot,
   summarizeRights,
 } from "./client";
+import {
+  alarmDestination,
+  configureAlarmCenter,
+  readAlarmCenter,
+  type AlarmScheme,
+} from "./alarm-center";
 
 /**
  * Catalogue des interventions à distance disponibles sur un enregistreur.
@@ -27,10 +33,12 @@ export type NvrActionName =
   | "channels"
   | "storage"
   | "alarm-out-state"
+  | "alarm-center"
   | "event-indexes"
   | "snapshot"
   | "sync-time"
   | "alarm-out"
+  | "configure-alarm-center"
   | "reboot";
 
 export type NvrActionDefinition = {
@@ -73,6 +81,13 @@ export const NVR_ACTIONS: Record<NvrActionName, NvrActionDefinition> = {
     kind: "read",
     scope: "nvr:test",
   },
+  "alarm-center": {
+    label: "Centre d'alarme configuré",
+    description:
+      "Destination vers laquelle l'enregistreur remonte ses alarmes, telle qu'elle est réglée sur l'équipement",
+    kind: "read",
+    scope: "nvr:test",
+  },
   "event-indexes": {
     label: "Canaux en alarme",
     description: "Canaux actuellement en alarme pour un code donné (paramètre `code`)",
@@ -94,6 +109,14 @@ export const NVR_ACTIONS: Record<NvrActionName, NvrActionDefinition> = {
   "alarm-out": {
     label: "Pilotage d'une sortie d'alarme",
     description: "Active ou relâche un relais (paramètres `index` et `active`)",
+    kind: "control",
+    scope: "nvr:control",
+  },
+  "configure-alarm-center": {
+    label: "Déclarer SENTINEL comme centre d'alarme",
+    description:
+      "Écrit l'adresse de la plateforme dans les paramètres d'alarme de l'enregistreur, en HTTPS " +
+      "par défaut (paramètres : `scheme` http|https, `dryRun` pour simuler, `section`, `fields` pour forcer des champs)",
     kind: "control",
     scope: "nvr:control",
   },
@@ -149,6 +172,18 @@ export async function executeNvrAction(options: {
       case "alarm-out-state":
         return { states: await getAlarmOutState(target) };
 
+      case "alarm-center": {
+        const current = await readAlarmCenter(target);
+        const expected = alarmDestination(nvr.webhookToken);
+        return {
+          // Ce que l'enregistreur enverrait s'il était correctement provisionné.
+          expected,
+          configured: current?.config ?? null,
+          section: current?.section ?? null,
+          supported: current !== null,
+        };
+      }
+
       case "event-indexes": {
         const code = typeof params.code === "string" ? params.code : "VideoMotion";
         return { code, channels: await getEventIndexes(target, code) };
@@ -175,6 +210,31 @@ export async function executeNvrAction(options: {
         const active = params.active === true || params.active === "true";
         await setAlarmOut(target, index, active);
         return { index, active };
+      }
+
+      case "configure-alarm-center": {
+        const scheme =
+          params.scheme === "http" || params.scheme === "https"
+            ? (params.scheme as AlarmScheme)
+            : undefined;
+        const fields =
+          typeof params.fields === "object" && params.fields !== null
+            ? Object.fromEntries(
+                Object.entries(params.fields as Record<string, unknown>).map(([key, value]) => [
+                  key,
+                  String(value),
+                ]),
+              )
+            : undefined;
+
+        return configureAlarmCenter({
+          target,
+          webhookToken: nvr.webhookToken,
+          scheme,
+          section: typeof params.section === "string" ? params.section : undefined,
+          overrides: fields,
+          dryRun: params.dryRun === true || params.dryRun === "true",
+        });
       }
 
       case "reboot":

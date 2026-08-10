@@ -77,10 +77,9 @@ le rôle `admin` à chaque connexion, y compris la toute première. Le rôle est
 exposé sur `session.user.role` et visible dans *Paramètres*. Les superadmins
 sont les seuls à pouvoir créer des clés d'API et lire le journal d'audit.
 
-## Webhook Alarm Center
+## Centralisation des alarmes
 
-Chaque NVR dispose d'un token unique. Configurer l'Alarm Center Dahua
-(*Configuration → Réseau → Centre d'alarme*) pour poster sur :
+Chaque NVR dispose d'un token unique et remonte ses événements sur :
 
 ```
 https://sentinel.noxia-groupe.fr/api/webhooks/dahua/<webhookToken>
@@ -88,6 +87,59 @@ https://sentinel.noxia-groupe.fr/api/webhooks/dahua/<webhookToken>
 
 Cette route est publique par conception (le token fait office
 d'authentification) ; toutes les autres routes exigent une session ou une clé.
+
+### Provisionnement automatique
+
+Il n'y a rien à saisir sur l'enregistreur : depuis l'onglet *Webhook* d'un NVR,
+**« Déclarer SENTINEL »** écrit l'adresse de la plateforme dans les paramètres
+d'alarme de l'équipement, en **HTTPS** par défaut. Même opération par l'API :
+
+```bash
+curl -X POST -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"action":"configure-alarm-center","params":{"scheme":"https"}}' \
+  "$BASE/api/v1/nvrs/$NVR/actions"
+```
+
+Le provisionnement passe par l'API de configuration à distance de l'équipement
+(`configManager`), qui accepte le HTTPS. Il procède en trois temps :
+
+1. **Lecture** de la section de configuration réellement exposée par le firmware
+   (`AlarmServer`, `AlarmCenter`, `HttpNotifyServer`… — les noms varient selon
+   les gammes et les versions).
+2. **Écriture** des seules clés que l'équipement expose déjà, jamais de champ
+   inventé, et uniquement celles dont la valeur change.
+3. **Relecture** de la configuration, renvoyée dans la réponse pour constater ce
+   que l'enregistreur a réellement retenu.
+
+Paramètres utiles :
+
+| Paramètre | Effet |
+| --- | --- |
+| `scheme` | `https` (défaut) ou `http` pour un firmware incapable de négocier TLS |
+| `dryRun` | Simule : renvoie les champs qui *seraient* écrits, sans rien modifier |
+| `section` | Force la section de configuration à utiliser |
+| `fields` | Force des champs précis (identifiant, protocole…) sans modifier le code |
+
+`GET`-side, l'action `alarm-center` retourne la destination actuellement réglée
+sur l'équipement et celle qu'il devrait avoir — de quoi repérer un NVR qui
+remonte encore vers un ancien système.
+
+> **Simuler avant d'écrire.** Si une télésurveillance tierce est déclarée dans
+> ces mêmes champs, le provisionnement la remplace. `dryRun` montre exactement
+> les champs concernés.
+
+Deux cas ne sont pas provisionnables et sont signalés explicitement :
+
+- un enregistreur en **P2P**, que la plateforme ne peut pas joindre ;
+- un firmware dont le centre d'alarme utilise le protocole **propriétaire**
+  (champ `Protocol` à `TCP`/`UDP`) : il ne sait pas poster sur une URL. L'adresse
+  et le port sont tout de même écrits, et un avertissement invite à utiliser le
+  menu de notification HTTP de l'équipement.
+
+À défaut, la configuration manuelle reste possible : *Configuration → Réseau →
+Centre d'alarme*, en ajoutant l'URL ci-dessus comme destination.
+
+### Réception
 
 Les requêtes **GET et POST** sont acceptées, en JSON, en formulaire ou en
 paramètres d'URL : les firmwares varient beaucoup d'un modèle à l'autre. Le code
@@ -109,6 +161,15 @@ SENTINEL dialogue avec les NVR par leur **API CGI HTTP**, en authentification
 Digest, sur le port de l'interface web (`httpPort`, 80 par défaut) — et non sur
 le port SDK 37777, qui reste renseigné à titre d'information pour SmartPSS/DMSS.
 Le HTTPS est accepté avec certificat auto-signé.
+
+> **Pourquoi l'API HTTP et non le NetSDK Dahua.** Le SDK réseau natif
+> (`libdhnetsdk`) est une bibliothèque binaire C dont le mode centre d'alarme
+> (`CLIENT_StartListenEx`) fait connecter les NVR sur un port TCP en protocole
+> propriétaire : ni HTTPS, ni URL, et un binding natif à maintenir dans l'image
+> Docker. L'API HTTP est l'interface de configuration à distance documentée par
+> Dahua, elle supporte le TLS et c'est elle qui permet de ne déclarer qu'une
+> adresse — exactement ce qui est attendu ici. Les deux mécanismes visent le même
+> but ; seul le second se prête à une plateforme web.
 
 Un enregistreur déclaré en **P2P** n'est pas joignable : le cloud Dahua n'expose
 pas d'API exploitable côté serveur. La réception des alarmes par webhook
@@ -202,10 +263,10 @@ un résultat d'exploitation, pas une erreur d'API. Seuls les problèmes d'appel
 `POST /api/v1/nvrs/{id}/actions` avec `{"action": "...", "params": {...}}` :
 
 - **Lecture** (`nvr:test`) : `device-info`, `users`, `channels`, `storage`,
-  `alarm-out-state`, `event-indexes` (`params.code`), `snapshot`
+  `alarm-out-state`, `alarm-center`, `event-indexes` (`params.code`), `snapshot`
   (`params.channel`).
-- **Contrôle** (`nvr:control`) : `sync-time`, `alarm-out`
-  (`params.index`, `params.active`), `reboot`.
+- **Contrôle** (`nvr:control`) : `configure-alarm-center`, `sync-time`,
+  `alarm-out` (`params.index`, `params.active`), `reboot`.
 
 Le catalogue exact est renvoyé par `GET /api/v1/nvrs/{id}/actions` et décrit dans
 la spécification OpenAPI.

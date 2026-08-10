@@ -691,8 +691,12 @@ export default function NvrDetailPage() {
                   </Button>
                 </div>
               </div>
+              <AlarmCenterProvisioning nvrId={nvrId} disabled={isP2p} />
+
               <div className="bg-amber-500/5 border border-amber-500/10 rounded-lg p-4">
-                <p className="text-amber-400 text-sm font-medium mb-2">Configuration Dahua</p>
+                <p className="text-amber-400 text-sm font-medium mb-2">
+                  Configuration manuelle (si le provisionnement n&apos;est pas possible)
+                </p>
                 <ol className="text-[#8896b4] text-sm space-y-1 list-decimal list-inside">
                   <li>Accédez à l&apos;interface web du NVR</li>
                   <li>
@@ -1015,6 +1019,227 @@ function ActionsPanel({
               }}
             >
               Redémarrer
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+type AlarmCenterOutcome = {
+  section: string;
+  applied: boolean;
+  destination: { url: string; host: string; port: number; scheme: string };
+  assignments: Record<string, string>;
+  warnings: string[];
+  before: unknown;
+  after: unknown;
+};
+
+/**
+ * Déclare SENTINEL comme destination d'alarme directement dans la
+ * configuration du NVR, sans passer par son interface web.
+ */
+function AlarmCenterProvisioning({ nvrId, disabled }: { nvrId: string; disabled: boolean }) {
+  const [scheme, setScheme] = useState<"https" | "http">("https");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [outcome, setOutcome] = useState<AlarmCenterOutcome | null>(null);
+  const [current, setCurrent] = useState<unknown>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
+  const call = async (action: string, actionParams: Record<string, unknown>) => {
+    setBusy(action);
+    setError(null);
+    try {
+      const res = await fetch(`/api/nvrs/${nvrId}/actions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, params: actionParams }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error ?? "Opération impossible");
+        return null;
+      }
+      return data.data;
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const readCurrent = async () => {
+    const data = await call("alarm-center", {});
+    if (data) {
+      setCurrent(data);
+      setOutcome(null);
+    }
+  };
+
+  const provision = async (dryRun: boolean) => {
+    const data = (await call("configure-alarm-center", { scheme, dryRun })) as
+      | AlarmCenterOutcome
+      | null;
+    if (data) {
+      setOutcome(data);
+      setCurrent(null);
+      if (data.applied) toast.success("Centre d'alarme déclaré sur l'enregistreur");
+      else toast.info("Simulation — aucune écriture sur l'enregistreur");
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-[#132255] bg-[#080d24] p-4 space-y-4">
+      <div>
+        <p className="text-sm font-medium text-[#dde1e4]">Provisionnement automatique</p>
+        <p className="text-xs text-[#8896b4] mt-1">
+          SENTINEL écrit son adresse dans les paramètres d&apos;alarme de l&apos;enregistreur. Rien
+          à saisir sur le NVR.
+        </p>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex rounded-lg border border-[#132255] overflow-hidden">
+          {(["https", "http"] as const).map((value) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setScheme(value)}
+              className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                scheme === value
+                  ? "bg-[#0251a1] text-white"
+                  : "bg-[#0a1130] text-[#8896b4] hover:text-[#dde1e4]"
+              }`}
+            >
+              {value.toUpperCase()}
+            </button>
+          ))}
+        </div>
+
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={disabled || busy !== null}
+          onClick={() => void readCurrent()}
+          className="border-[#132255] bg-[#0a1130] text-[#dde1e4] hover:bg-[#132255]"
+        >
+          {busy === "alarm-center" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+          Lire la configuration
+        </Button>
+
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={disabled || busy !== null}
+          onClick={() => void provision(true)}
+          className="border-[#132255] bg-[#0a1130] text-[#dde1e4] hover:bg-[#132255]"
+        >
+          Simuler
+        </Button>
+
+        <Button
+          size="sm"
+          disabled={disabled || busy !== null}
+          onClick={() => setConfirmOpen(true)}
+          className="bg-[#0251a1] hover:bg-[#0363c2]"
+        >
+          {busy === "configure-alarm-center" ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : null}
+          Déclarer SENTINEL
+        </Button>
+      </div>
+
+      {disabled && (
+        <p className="text-xs text-[#8896b4]">
+          Indisponible en mode P2P : la plateforme doit pouvoir joindre l&apos;enregistreur pour
+          écrire sa configuration.
+        </p>
+      )}
+
+      {error && (
+        <p className="text-xs text-red-400 border border-red-500/25 bg-red-500/5 rounded-lg p-3">
+          {error}
+        </p>
+      )}
+
+      {outcome && (
+        <div className="space-y-3 border-t border-[#132255] pt-3">
+          <p className="text-xs text-[#8896b4]">
+            Section <span className="font-mono text-[#dde1e4]">{outcome.section}</span> ·{" "}
+            {outcome.applied ? "écriture effectuée" : "simulation"} · destination{" "}
+            <span className="font-mono text-[#dde1e4]">{outcome.destination.url}</span>
+          </p>
+
+          {Object.keys(outcome.assignments).length > 0 ? (
+            <ul className="space-y-1">
+              {Object.entries(outcome.assignments).map(([path, value]) => (
+                <li key={path} className="text-xs font-mono text-[#dde1e4]">
+                  <span className="text-[#8896b4]">{path}</span> = {value}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-xs text-green-400">
+              Aucune modification nécessaire — l&apos;enregistreur pointe déjà ici.
+            </p>
+          )}
+
+          {outcome.warnings.map((warning) => (
+            <p
+              key={warning}
+              className="text-xs text-amber-400 border border-amber-500/20 bg-amber-500/5 rounded-lg p-3"
+            >
+              {warning}
+            </p>
+          ))}
+
+          {outcome.after !== null && (
+            <details>
+              <summary className="cursor-pointer text-xs text-[#8896b4]">
+                Configuration relue sur l&apos;enregistreur
+              </summary>
+              <pre className="mt-2 max-h-48 overflow-auto rounded-lg bg-[#0a1130] border border-[#132255] p-3 text-[11px] text-[#8896b4]">
+                {JSON.stringify(outcome.after, null, 2)}
+              </pre>
+            </details>
+          )}
+        </div>
+      )}
+
+      {current !== null && (
+        <pre className="max-h-48 overflow-auto rounded-lg bg-[#0a1130] border border-[#132255] p-3 text-[11px] text-[#8896b4] border-t">
+          {JSON.stringify(current, null, 2)}
+        </pre>
+      )}
+
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent className="border-[#132255] bg-[#0d1537] text-[#dde1e4]">
+          <DialogHeader>
+            <DialogTitle>Modifier la configuration de l&apos;enregistreur ?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-[#8896b4]">
+            Les paramètres d&apos;alarme du NVR vont être réécrits pour pointer sur SENTINEL en{" "}
+            {scheme.toUpperCase()}. Si une télésurveillance tierce est déclarée à cet endroit, elle
+            sera remplacée — utilisez « Simuler » pour voir les champs concernés avant d&apos;écrire.
+          </p>
+          <div className="flex justify-end gap-3 mt-4">
+            <Button
+              variant="secondary"
+              onClick={() => setConfirmOpen(false)}
+              className="bg-[#132255] hover:bg-[#1a2d66]"
+            >
+              Annuler
+            </Button>
+            <Button
+              onClick={() => {
+                setConfirmOpen(false);
+                void provision(false);
+              }}
+              className="bg-[#0251a1] hover:bg-[#0363c2]"
+            >
+              Écrire la configuration
             </Button>
           </div>
         </DialogContent>
