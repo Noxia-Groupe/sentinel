@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { requireScope, apiError } from "@/lib/api/guard";
 import { prisma } from "@/lib/prisma";
 import { NVR_ACTIONS } from "@/lib/dahua/actions";
+import { isReachable } from "@/lib/dahua/service";
+import { p2pStatus } from "@/lib/dahua/p2p";
 
 // GET /api/v1/nvrs/[id] — Fiche complète d'un enregistreur
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -57,7 +59,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     credentials: nvr.credentials,
     recentChecks: nvr.checks,
     openAlarms: nvr._count.events,
-    reachable: nvr.connectionMode !== "p2p" && Boolean(nvr.ip),
+    reachable: isReachable(nvr),
+    // En P2P, la plateforme passe par un tunnel ouvert depuis le numéro de série.
+    p2p: nvr.connectionMode === "p2p" ? p2pStatus() : null,
     availableActions: Object.entries(NVR_ACTIONS).map(([name, definition]) => ({
       name,
       ...definition,

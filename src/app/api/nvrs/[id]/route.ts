@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { recordAudit } from "@/lib/audit";
+import { isReachable } from "@/lib/dahua/service";
+import { p2pStatus } from "@/lib/dahua/p2p";
 
 // GET /api/nvrs/[id] — Détail d'un enregistreur
 //
@@ -59,7 +61,13 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   if (!nvr) return NextResponse.json({ error: "NVR non trouvé" }, { status: 404 });
 
-  return NextResponse.json(nvr);
+  return NextResponse.json({
+    ...nvr,
+    // L'interface s'appuie dessus pour activer les tests et les interventions :
+    // en P2P, cela dépend de la disponibilité du tunnel sur cette instance.
+    reachable: isReachable(nvr),
+    p2p: p2pStatus(),
+  });
 }
 
 // PUT /api/nvrs/[id] — Met à jour un enregistreur

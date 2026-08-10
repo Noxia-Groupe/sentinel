@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireScope } from "@/lib/api/guard";
 import { prisma } from "@/lib/prisma";
+import { isReachable } from "@/lib/dahua/service";
 
 // GET /api/v1/nvrs — Inventaire des enregistreurs
 // Filtres : ?clientId= &status= &search=
@@ -61,8 +62,8 @@ export async function GET(req: Request) {
       // Les mots de passe ne sont pas exposés ici : voir l'endpoint `reveal`.
       credentials: nvr.credentials,
       openAlarms: nvr._count.events,
-      // Un enregistreur en P2P n'est pas joignable directement par la plateforme.
-      reachable: nvr.connectionMode !== "p2p" && Boolean(nvr.ip),
+      // En P2P, la joignabilité dépend de la disponibilité du tunnel.
+      reachable: isReachable(nvr),
     })),
   });
 }

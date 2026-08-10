@@ -114,6 +114,9 @@ type NvrDetail = {
   events: NvrEventRow[];
   checks: Check[];
   createdAt: string;
+  /** Faux quand ni l'IP ni le tunnel P2P ne permettent d'atteindre l'équipement. */
+  reachable: boolean;
+  p2p: { available: boolean; helper: string | null; activeTunnels: number };
 };
 
 type TestResult = {
@@ -268,6 +271,9 @@ export default function NvrDetailPage() {
   }
 
   const isP2p = nvr.connectionMode === "p2p";
+  // Le P2P n'est plus un obstacle en soi : ce qui compte est de savoir si un
+  // tunnel peut être ouvert sur cette instance.
+  const unreachable = !nvr.reachable;
 
   return (
     <div className="p-6 lg:p-8 space-y-6">
@@ -304,7 +310,7 @@ export default function NvrDetailPage() {
           </Badge>
           <Button
             onClick={() => void runTest()}
-            disabled={testing || isP2p}
+            disabled={testing || unreachable}
             className="bg-[#0251a1] hover:bg-[#0363c2]"
           >
             {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plug className="h-4 w-4" />}
@@ -313,16 +319,28 @@ export default function NvrDetailPage() {
         </div>
       </div>
 
-      {isP2p && (
-        <Card className="border-amber-500/20 bg-amber-500/5">
-          <CardContent className="py-4 text-sm text-amber-300/90">
-            Cet enregistreur est déclaré en <strong>P2P</strong>. Le cloud Dahua n&apos;expose pas
-            d&apos;API exploitable côté serveur : les tests d&apos;accès et les interventions à
-            distance nécessitent une adresse IP joignable (VPN ou redirection de port). La réception
-            des alarmes par webhook, elle, fonctionne normalement.
-          </CardContent>
-        </Card>
-      )}
+      {isP2p &&
+        (nvr.p2p.available ? (
+          <Card className="border-[#0251a1]/25 bg-[#0251a1]/5">
+            <CardContent className="py-4 text-sm text-[#8fc3f5]">
+              Enregistreur en <strong>P2P</strong> : SENTINEL ouvre un tunnel vers l&apos;équipement
+              à partir de son numéro de série{" "}
+              <span className="font-mono">{nvr.p2pSerial ?? nvr.serialNumber}</span> et des
+              identifiants enregistrés ici. Tests d&apos;accès, droits et interventions fonctionnent
+              comme sur un enregistreur joignable par IP.
+            </CardContent>
+          </Card>
+        ) : (
+          <Card className="border-amber-500/20 bg-amber-500/5">
+            <CardContent className="py-4 text-sm text-amber-300/90">
+              Enregistreur en <strong>P2P</strong>, mais l&apos;accès P2P n&apos;est pas activé sur
+              cette instance : renseigner <span className="font-mono">DAHUA_P2P_HELPER</span> pour
+              ouvrir des tunnels par numéro de série. En attendant, seule la réception des alarmes
+              par webhook fonctionne — les tests et interventions nécessiteraient une adresse IP
+              joignable.
+            </CardContent>
+          </Card>
+        ))}
 
       {testResult && <TestResultCard result={testResult} />}
 
@@ -445,7 +463,7 @@ export default function NvrDetailPage() {
             <div className="flex gap-2">
               <Button
                 variant="outline"
-                disabled={testing || isP2p || nvr.credentials.length === 0}
+                disabled={testing || unreachable || nvr.credentials.length === 0}
                 onClick={() => void testAllCredentials(nvrId, setTesting, fetchNvr)}
                 className="border-[#132255] bg-[#080d24] text-[#dde1e4] hover:bg-[#132255]"
               >
@@ -590,7 +608,7 @@ export default function NvrDetailPage() {
                         <Button
                           size="sm"
                           variant="outline"
-                          disabled={testing || isP2p}
+                          disabled={testing || unreachable}
                           onClick={() => void runTest(cred.id)}
                           className="border-[#132255] bg-[#080d24] text-[#dde1e4] hover:bg-[#132255]"
                         >
@@ -618,7 +636,7 @@ export default function NvrDetailPage() {
 
         {/* Interventions */}
         <TabsContent value="actions">
-          <ActionsPanel nvrId={nvrId} disabled={isP2p} credentials={nvr.credentials} />
+          <ActionsPanel nvrId={nvrId} disabled={unreachable} credentials={nvr.credentials} />
         </TabsContent>
 
         {/* Alarmes */}
@@ -691,7 +709,7 @@ export default function NvrDetailPage() {
                   </Button>
                 </div>
               </div>
-              <AlarmCenterProvisioning nvrId={nvrId} disabled={isP2p} />
+              <AlarmCenterProvisioning nvrId={nvrId} disabled={unreachable} />
 
               <div className="bg-amber-500/5 border border-amber-500/10 rounded-lg p-4">
                 <p className="text-amber-400 text-sm font-medium mb-2">
@@ -955,7 +973,8 @@ function ActionsPanel({
 
           {disabled && (
             <p className="text-xs text-[#8896b4]">
-              Indisponible en mode P2P : renseignez une adresse IP joignable.
+              Enregistreur injoignable : renseignez une adresse IP, ou activez l&apos;accès P2P
+              (DAHUA_P2P_HELPER) s&apos;il est déclaré par numéro de série.
             </p>
           )}
         </CardContent>
@@ -1153,8 +1172,8 @@ function AlarmCenterProvisioning({ nvrId, disabled }: { nvrId: string; disabled:
 
       {disabled && (
         <p className="text-xs text-[#8896b4]">
-          Indisponible en mode P2P : la plateforme doit pouvoir joindre l&apos;enregistreur pour
-          écrire sa configuration.
+          Enregistreur injoignable : la plateforme doit pouvoir l&apos;atteindre — par IP ou par
+          tunnel P2P — pour écrire sa configuration.
         </p>
       )}
 

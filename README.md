@@ -130,7 +130,8 @@ remonte encore vers un ancien système.
 
 Deux cas ne sont pas provisionnables et sont signalés explicitement :
 
-- un enregistreur en **P2P**, que la plateforme ne peut pas joindre ;
+- un enregistreur en **P2P** sur une instance où l'accès P2P n'est pas activé
+  (voir plus bas) ;
 - un firmware dont le centre d'alarme utilise le protocole **propriétaire**
   (champ `Protocol` à `TCP`/`UDP`) : il ne sait pas poster sur une URL. L'adresse
   et le port sont tout de même écrits, et un avertissement invite à utiliser le
@@ -171,22 +172,65 @@ Le HTTPS est accepté avec certificat auto-signé.
 > adresse — exactement ce qui est attendu ici. Les deux mécanismes visent le même
 > but ; seul le second se prête à une plateforme web.
 
-Un enregistreur déclaré en **P2P** n'est pas joignable : le cloud Dahua n'expose
-pas d'API exploitable côté serveur. La réception des alarmes par webhook
-fonctionne, mais les tests d'accès et les interventions exigent une adresse IP
-atteignable (VPN ou redirection de port). L'interface et l'API le signalent
-explicitement (motif `unsupported`).
-
 Les tests renvoient un motif d'échec normalisé, exploitable par un humain comme
 par un agent :
 
 | Motif | Signification |
 | --- | --- |
-| `unreachable` | Hôte injoignable, port fermé ou délai dépassé |
+| `unreachable` | Hôte injoignable, port fermé, tunnel P2P non établi ou délai dépassé |
 | `auth` | Identifiants refusés par l'équipement |
 | `forbidden` | Compte valide mais droits insuffisants pour l'opération |
-| `unsupported` | Impossible dans cette configuration (P2P) |
-| `invalid` | Configuration incomplète côté SENTINEL (pas d'IP, pas de compte) |
+| `unsupported` | Impossible dans cette configuration (accès P2P non activé) |
+| `invalid` | Configuration incomplète côté SENTINEL (ni IP ni numéro de série, pas de compte) |
+
+### Enregistreurs en P2P
+
+La plupart des sites clients n'ont ni VPN ni redirection de port : le NVR
+s'enregistre sur le cloud Dahua avec son **numéro de série**, et c'est par là
+que DMSS ou SmartPSS l'atteignent. SENTINEL fait la même chose : un tunnel est
+ouvert vers l'équipement à partir de son numéro de série et des identifiants
+stockés dans la plateforme, puis **toutes les fonctions marchent à l'identique**
+— test d'accès, vérification des droits, interventions, provisionnement du
+centre d'alarme. Le reste du code ne voit qu'un hôte et un port.
+
+L'établissement du tunnel est la seule partie déléguée. Le transport Dahua
+(PTCP, de l'encapsulage TCP-dans-UDP) n'est pas documenté publiquement et ne
+s'implémente pas de but en blanc : SENTINEL appelle donc un utilitaire externe
+dont le contrat tient en une ligne — *à partir d'un numéro de série, ouvrir un
+port TCP local qui aboutit sur l'équipement*.
+
+```env
+DAHUA_P2P_HELPER="dh-p2p --serial {serial} --bind {host}:{port} --remote {devicePort}"
+```
+
+Substitutions disponibles : `{serial}`, `{host}`, `{port}` (port local à ouvrir)
+et `{devicePort}` (port visé sur l'équipement, soit `httpPort`). Les
+identifiants ne sont **jamais** passés en arguments — ils seraient lisibles dans
+la liste des processus — mais dans l'environnement du programme :
+`DAHUA_P2P_USERNAME`, `DAHUA_P2P_PASSWORD`, `DAHUA_P2P_SERIAL`,
+`DAHUA_P2P_LOCAL_PORT`, `DAHUA_P2P_DEVICE_PORT`.
+
+Deux utilitaires possibles :
+
+- le **SDK réseau officiel Dahua** (`libdhnetsdk`), à récupérer sur le portail
+  développeur, enveloppé dans un petit binaire qui expose le port local ;
+- une **implémentation communautaire** du protocole, par exemple
+  [`khoanguyen-3fc/dh-p2p`](https://github.com/khoanguyen-3fc/dh-p2p), qui fait
+  exactement ce tunneling TCP à partir d'un numéro de série.
+
+Le tunnel est mutualisé entre les appels concurrents et refermé après
+`DAHUA_P2P_IDLE_MS` d'inactivité : une rafale d'appels sur le même enregistreur
+n'ouvre qu'une session cloud.
+
+Sans `DAHUA_P2P_HELPER`, un NVR P2P reste déclarable et continue de remonter ses
+alarmes par webhook ; l'interface indique simplement que les tests et les
+interventions demandent l'activation de l'accès P2P (motif `unsupported`).
+
+> **Le numéro de série est un secret.** Sur les firmwares antérieurs à
+> mi-2024, il suffit à ouvrir un tunnel vers la console web d'un équipement
+> ([CVE-2025-31702](https://labs.itresit.es/2025/10/15/dahua-cve-2025-31702-p2p-auto-update-eop/)),
+> et les séries sont partiellement prédictibles. Traiter le champ `p2pSerial`
+> avec le même soin que les mots de passe, et tenir les firmwares à jour.
 
 ## API pour les agents IA et les intégrations
 

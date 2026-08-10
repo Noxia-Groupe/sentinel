@@ -4,6 +4,7 @@ import { decrypt } from "@/lib/crypto";
 import { recordAudit } from "@/lib/audit";
 import type { Actor } from "@/lib/actor";
 import { DahuaError, type DahuaFailureReason, type DahuaTarget } from "./http";
+import { isP2pAvailable, openTunnel } from "./p2p";
 import {
   getRightsForAccount,
   testConnection,
@@ -33,31 +34,79 @@ export type ConnectionTestResult = {
 /** Délai réseau appliqué aux appels sortants vers les enregistreurs. */
 const TIMEOUT_MS = Number(process.env.DAHUA_TIMEOUT_MS ?? 8000);
 
+/** Cible résolue, accompagnée de la libération du tunnel P2P le cas échéant. */
+export type ResolvedTarget = { target: DahuaTarget; release: () => void };
+
 /**
  * Construit la cible réseau à partir d'un NVR et d'un compte enregistré.
+ *
+ * En mode P2P, l'équipement n'a pas d'adresse joignable : un tunnel est ouvert
+ * via le cloud Dahua à partir de son numéro de série, et la cible devient le
+ * port local de ce tunnel. Le reste de la plateforme n'a pas à s'en soucier.
+ *
  * Lève une `DahuaError` explicite quand la configuration ne permet pas
  * d'atteindre l'équipement.
  */
-export function resolveTarget(nvr: Nvr, credential: NvrCredential): DahuaTarget {
+export async function resolveTarget(
+  nvr: Nvr,
+  credential: NvrCredential,
+): Promise<ResolvedTarget> {
+  const username = credential.username;
+  const password = decrypt(credential.encryptedPassword);
+
   if (nvr.connectionMode === "p2p") {
-    throw new DahuaError(
-      "unsupported",
-      "Enregistreur déclaré en P2P : SENTINEL ne peut pas l'atteindre directement. " +
-        "Renseigner une adresse IP joignable (VPN, port ouvert) pour activer les tests et les actions distantes.",
-    );
+    const serial = nvr.p2pSerial ?? nvr.serialNumber;
+    if (!serial) {
+      throw new DahuaError(
+        "invalid",
+        "Aucun numéro de série P2P renseigné pour cet enregistreur",
+      );
+    }
+
+    const tunnel = await openTunnel({
+      serial,
+      devicePort: nvr.httpPort,
+      username,
+      password,
+    });
+
+    return {
+      target: {
+        host: tunnel.host,
+        port: tunnel.port,
+        // Le tunnel achemine le TCP tel quel : si l'équipement parle en TLS,
+        // la négociation se fait de bout en bout à travers le tunnel.
+        useHttps: nvr.useHttps,
+        username,
+        password,
+        timeoutMs: TIMEOUT_MS,
+      },
+      release: tunnel.release,
+    };
   }
+
   if (!nvr.ip) {
     throw new DahuaError("invalid", "Aucune adresse IP renseignée pour cet enregistreur");
   }
 
   return {
-    host: nvr.ip,
-    port: nvr.httpPort,
-    useHttps: nvr.useHttps,
-    username: credential.username,
-    password: decrypt(credential.encryptedPassword),
-    timeoutMs: TIMEOUT_MS,
+    target: {
+      host: nvr.ip,
+      port: nvr.httpPort,
+      useHttps: nvr.useHttps,
+      username,
+      password,
+      timeoutMs: TIMEOUT_MS,
+    },
+    release: () => {},
   };
+}
+
+/** Indique si un enregistreur est atteignable dans la configuration actuelle. */
+export function isReachable(nvr: Nvr): boolean {
+  return nvr.connectionMode === "p2p"
+    ? isP2pAvailable() && Boolean(nvr.p2pSerial ?? nvr.serialNumber)
+    : Boolean(nvr.ip);
 }
 
 /**
@@ -123,20 +172,23 @@ export async function testNvrConnection(options: {
   let result: ConnectionTestResult;
   let device: DeviceInfo | undefined;
   let rights: RightsSummary | undefined;
+  let resolved: ResolvedTarget | undefined;
 
   try {
-    const target = resolveTarget(nvr, credential);
-    const { latencyMs, device: info } = await testConnection(target);
+    resolved = await resolveTarget(nvr, credential);
+    const { latencyMs, device: info } = await testConnection(resolved.target);
     device = info;
 
     if (includeRights) {
       // L'échec de la lecture des droits ne remet pas en cause la connexion.
-      rights = await getRightsForAccount(target).catch(() => undefined);
+      rights = await getRightsForAccount(resolved.target).catch(() => undefined);
     }
 
     result = {
       ok: true,
-      message: `Connexion établie avec le compte « ${credential.username} »`,
+      message:
+        `Connexion établie avec le compte « ${credential.username} »` +
+        (nvr.connectionMode === "p2p" ? " via le tunnel P2P" : ""),
       latencyMs,
       device,
       rights,
@@ -152,6 +204,8 @@ export async function testNvrConnection(options: {
       credential: credentialRef,
       checkedAt: checkedAt.toISOString(),
     };
+  } finally {
+    resolved?.release();
   }
 
   await persistCheck({ nvr, credential, result, device, rights, actor });
@@ -289,9 +343,10 @@ export async function runNvrAction<T>(options: {
     return { ok: false, reason: "invalid", message };
   }
 
+  let resolved: ResolvedTarget | undefined;
   try {
-    const target = resolveTarget(nvr, credential);
-    const data = await run(target);
+    resolved = await resolveTarget(nvr, credential);
+    const data = await run(resolved.target);
     await recordAudit({
       actor,
       action,
@@ -312,6 +367,8 @@ export async function runNvrAction<T>(options: {
       metadata: { ...metadata, credentialId: credential.id, reason, message },
     });
     return { ok: false, reason, message };
+  } finally {
+    resolved?.release();
   }
 }
 
