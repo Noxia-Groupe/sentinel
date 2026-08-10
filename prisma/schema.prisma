@@ -19,6 +19,12 @@ model User {
   sessions      Session[]
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+
+  apiKeys           ApiKey[]
+  acknowledgedEvents NvrEvent[]     @relation("EventAcknowledgedBy")
+  resolvedEvents     NvrEvent[]     @relation("EventResolvedBy")
+  assignedEvents     NvrEvent[]     @relation("EventAssignedTo")
+  eventComments      EventComment[]
 }
 
 model Account {
@@ -55,51 +61,225 @@ model VerificationToken {
   @@unique([identifier, token])
 }
 
+// Client final : le parc de chaque client est regroupé sous une fiche
+model Client {
+  id           String   @id @default(cuid())
+  name         String
+  // Référence interne (code dossier, code chantier…)
+  code         String?  @unique
+  contactName  String?
+  contactEmail String?
+  contactPhone String?
+  address      String?
+  notes        String?
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  nvrs Nvr[]
+
+  @@index([name])
+}
+
 // Enregistreur NVR Dahua
 model Nvr {
-  id             String         @id @default(cuid())
+  id             String  @id @default(cuid())
   name           String
+  clientId       String?
+  client         Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
   ip             String?
-  port           Int            @default(37777)
-  serialNumber   String?        @unique
+  // Port du SDK privé Dahua (37777) — utilisé par SmartPSS / DMSS
+  port           Int     @default(37777)
+  // Port de l'interface web / API CGI : c'est celui qu'utilise SENTINEL
+  httpPort       Int     @default(80)
+  // true = l'API CGI est jointe en HTTPS (certificat auto-signé accepté)
+  useHttps       Boolean @default(false)
+  serialNumber   String? @unique
   model          String?
+  firmware       String?
   location       String?
   notes          String?
   // Mode de connexion : "ip" = direct IP, "p2p" = Dahua P2P
-  connectionMode String         @default("ip")
+  connectionMode String  @default("ip")
   // Identifiant P2P (généralement le SN, ex: 5H02A12PAX00001)
   p2pSerial      String?
-  status         String         @default("unknown")
-  lastSeen       DateTime?
-  webhookToken   String         @unique @default(cuid())
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
-  credentials    NvrCredential[]
-  events         NvrEvent[]
+  status         String  @default("unknown")
+
+  lastSeen         DateTime?
+  // Dernier test de connexion effectué depuis SENTINEL
+  lastCheckAt      DateTime?
+  lastCheckOk      Boolean?
+  lastCheckMessage String?
+
+  webhookToken String   @unique @default(cuid())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  credentials NvrCredential[]
+  events      NvrEvent[]
+  checks      ConnectionCheck[]
+
+  @@index([clientId])
+  @@index([status])
 }
 
 // Credentials chiffrés pour accès NVR
 model NvrCredential {
-  id              String   @id @default(cuid())
-  nvrId           String
-  nvr             Nvr      @relation(fields: [nvrId], references: [id], onDelete: Cascade)
-  type            String   // "admin" | "telesurveilleur"
-  username        String   // Nom d'utilisateur (stocké en clair)
-  encryptedPassword String // Mot de passe chiffré AES-256-GCM (Base64)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id                String  @id @default(cuid())
+  nvrId             String
+  nvr               Nvr     @relation(fields: [nvrId], references: [id], onDelete: Cascade)
+  // "admin" | "telesurveilleur" | "installateur" | "client" | "technicien"
+  type              String
+  label             String?
+  username          String // Nom d'utilisateur (stocké en clair)
+  encryptedPassword String // Mot de passe chiffré AES-256-GCM
 
-  @@unique([nvrId, type])
+  // Résultat du dernier test effectué avec ce compte
+  lastTestedAt DateTime?
+  lastTestOk   Boolean?
+  // Droits constatés sur l'équipement lors du dernier test (groupe, autorités…)
+  rights       Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  checks ConnectionCheck[]
+
+  // Un même NVR peut porter plusieurs comptes du même type (deux télésurveilleurs
+  // par exemple) : c'est le couple type + identifiant qui doit être unique.
+  @@unique([nvrId, type, username])
 }
 
-// Événements reçus des NVR via Alarm Center
+// Événements reçus des NVR (Alarm Center) et traités depuis la plateforme
 model NvrEvent {
-  id        String   @id @default(cuid())
-  nvrId     String
-  nvr       Nvr      @relation(fields: [nvrId], references: [id], onDelete: Cascade)
-  type      String   // Type d'événement (alarm, motion, disk_error, etc.)
-  payload   Json     // Payload complet de l'événement
+  id      String @id @default(cuid())
+  nvrId   String
+  nvr     Nvr    @relation(fields: [nvrId], references: [id], onDelete: Cascade)
+  type    String // Type d'événement normalisé (VideoMotion, VideoLoss, …)
+  title   String? // Libellé lisible calculé à la réception
+  code    String? // Code brut renvoyé par l'équipement
+  channel Int? // Canal / caméra concerné
+  payload Json // Payload complet de l'événement
+
+  // "critical" | "major" | "minor" | "info"
+  severity String @default("info")
+  // "new" | "acknowledged" | "in_progress" | "resolved" | "ignored"
+  status   String @default("new")
+  // "webhook" | "manual" | "poll"
+  source   String @default("webhook")
+
+  acknowledgedAt   DateTime?
+  acknowledgedById String?
+  acknowledgedBy   User?     @relation("EventAcknowledgedBy", fields: [acknowledgedById], references: [id], onDelete: SetNull)
+  // Renseigné quand le traitement vient d'une clé API (agent IA)
+  acknowledgedByKey String?
+
+  resolvedAt   DateTime?
+  resolvedById String?
+  resolvedBy   User?     @relation("EventResolvedBy", fields: [resolvedById], references: [id], onDelete: SetNull)
+  resolution   String?
+
+  assignedToId String?
+  assignedTo   User?   @relation("EventAssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
+
   receivedAt DateTime @default(now())
 
+  comments EventComment[]
+
   @@index([nvrId, receivedAt])
+  @@index([status, receivedAt])
+  @@index([severity, receivedAt])
+  @@index([receivedAt])
+}
+
+// Main courante d'un événement
+model EventComment {
+  id      String   @id @default(cuid())
+  eventId String
+  event   NvrEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  authorId    String?
+  author      User?   @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  // Nom affiché quand l'auteur est une clé API (agent IA) ou le système
+  authorLabel String?
+
+  body      String
+  createdAt DateTime @default(now())
+
+  @@index([eventId, createdAt])
+}
+
+// Historique des tests de connexion / vérifications de droits
+model ConnectionCheck {
+  id           String         @id @default(cuid())
+  nvrId        String
+  nvr          Nvr            @relation(fields: [nvrId], references: [id], onDelete: Cascade)
+  credentialId String?
+  credential   NvrCredential? @relation(fields: [credentialId], references: [id], onDelete: SetNull)
+
+  success   Boolean
+  latencyMs Int?
+  message   String?
+  // Infos remontées par l'équipement (modèle, firmware, SN…)
+  device    Json?
+  // Droits du compte testé (groupe, liste d'autorités…)
+  rights    Json?
+
+  // "user" | "apikey" | "system"
+  actorType  String  @default("user")
+  actorId    String?
+  actorLabel String?
+
+  createdAt DateTime @default(now())
+
+  @@index([nvrId, createdAt])
+}
+
+// Clés d'API pour les intégrations et agents IA
+model ApiKey {
+  id     String @id @default(cuid())
+  name   String
+  // Préfixe public affiché dans l'interface (les 12 premiers caractères)
+  prefix String @unique
+  // SHA-256 du secret complet — le secret en clair n'est jamais stocké
+  hash   String @unique
+
+  // Ex: ["alarms:read", "alarms:write", "nvr:read", "nvr:test",
+  //      "nvr:control", "credentials:read"]
+  scopes String[]
+
+  createdById String?
+  createdBy   User?   @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  lastUsedAt DateTime?
+  expiresAt  DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([revokedAt])
+}
+
+// Journal d'audit : toute action sensible (lecture d'un mot de passe, test de
+// connexion, action distante, traitement d'alarme) y est tracée.
+model AuditLog {
+  id String @id @default(cuid())
+
+  // "user" | "apikey" | "system"
+  actorType  String
+  actorId    String?
+  actorLabel String?
+
+  action     String // "credential.reveal", "nvr.reboot", "event.acknowledge"…
+  targetType String? // "nvr" | "event" | "credential" | "client" | "apikey"
+  targetId   String?
+  success    Boolean @default(true)
+  metadata   Json?
+  ip         String?
+
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([actorType, actorId])
+  @@index([targetType, targetId])
 }

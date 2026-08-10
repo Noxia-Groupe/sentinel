@@ -32,6 +32,11 @@ services:
       AUTH_MICROSOFT_ENTRA_ID_ISSUER: ${AUTH_MICROSOFT_ENTRA_ID_ISSUER}
       AUTH_TRUST_HOST: "true"
       ADMIN_EMAILS: ${ADMIN_EMAILS}
+      # Adresse déclarée aux NVR comme centre d'alarme (défaut : NEXTAUTH_URL).
+      ALARM_CENTER_URL: ${ALARM_CENTER_URL:-}
+      # Utilitaire d'ouverture des tunnels P2P — vide = accès P2P désactivé.
+      # Le binaire correspondant doit être présent dans l'image.
+      DAHUA_P2P_HELPER: ${DAHUA_P2P_HELPER:-}
     networks:
       - nginx-proxy
 
