@@ -3,6 +3,8 @@ import Link from "next/link";
 import Image from "next/image";
 import { redirect } from "next/navigation";
 import {
+  Bell,
+  Building2,
   LayoutDashboard,
   Server,
   Settings,
@@ -28,7 +30,9 @@ export const metadata: Metadata = {
 
 const navigation = [
   { name: "Tableau de bord", href: "/", icon: LayoutDashboard },
+  { name: "Centre d'alarme", href: "/alarms", icon: Bell },
   { name: "Enregistreurs", href: "/nvrs", icon: Server },
+  { name: "Clients", href: "/clients", icon: Building2 },
   { name: "Paramètres", href: "/settings", icon: Settings },
 ];
 
