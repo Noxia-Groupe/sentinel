@@ -2,6 +2,17 @@
 
 FROM node:22-alpine AS base
 
+# --- Tunnel P2P Dahua ---------------------------------------------------------
+# Compile l'utilitaire `dh-p2p` (vendoré sous vendor/dh-p2p, licence MIT) qui
+# ouvre un tunnel vers un enregistreur à partir de son seul numéro de série,
+# via le cloud Dahua. On compile sur la même base musl (Alpine) que l'image Node,
+# donc le binaire tourne tel quel dans l'image finale.
+FROM rust:1-alpine AS p2p-builder
+RUN apk add --no-cache musl-dev
+WORKDIR /build
+COPY vendor/dh-p2p/ ./
+RUN cargo build --release
+
 # Install dependencies
 FROM base AS deps
 RUN apk add --no-cache libc6-compat
@@ -29,6 +40,9 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
 RUN apk add --no-cache postgresql-client
+
+# Utilitaire de tunnel P2P, joignable via le défaut DAHUA_P2P_HELPER.
+COPY --from=p2p-builder /build/target/release/dh-p2p /usr/local/bin/dh-p2p
 
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs

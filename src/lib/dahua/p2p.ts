@@ -28,20 +28,43 @@ import { DahuaError } from "./http";
  * Commande à lancer, avec substitution de `{serial}`, `{port}` (port local à
  * ouvrir), `{host}` et `{devicePort}` (port visé sur l'équipement).
  *
- * Exemple : `dh-p2p --serial {serial} --bind {host}:{port} --remote {devicePort}`
+ * Défaut : l'utilitaire `dh-p2p` embarqué dans l'image (voir Dockerfile), dont
+ * le contrat est `--port [bind:]port:remote_port <serial>`.
  */
-const HELPER_COMMAND = process.env.DAHUA_P2P_HELPER?.trim();
+const HELPER_COMMAND =
+  process.env.DAHUA_P2P_HELPER?.trim() ||
+  "/usr/local/bin/dh-p2p --port {host}:{port}:{devicePort} {serial}";
 
 /** Durée d'inactivité au bout de laquelle le tunnel est refermé. */
 const IDLE_MS = Number(process.env.DAHUA_P2P_IDLE_MS ?? 120_000);
 
-/** Délai laissé à l'utilitaire pour ouvrir le port local. */
+/** Délai laissé à l'utilitaire pour établir le tunnel. */
 const READY_TIMEOUT_MS = Number(process.env.DAHUA_P2P_READY_TIMEOUT_MS ?? 20_000);
+
+/**
+ * Motif imprimé par l'utilitaire quand le tunnel est réellement prêt.
+ *
+ * `dh-p2p` ouvre son port TCP local dès le démarrage, avant même la fin du
+ * handshake P2P : se fier au seul port ouvert conclurait « prêt » trop tôt et
+ * la première requête resterait bloquée le temps du handshake. On attend donc
+ * ce marqueur sur la sortie de l'utilitaire, avec repli sur le test du port
+ * quand aucun marqueur n'est configuré (chaîne vide).
+ */
+const READY_PATTERN =
+  process.env.DAHUA_P2P_READY_PATTERN ?? "Ready to connect";
 
 const LOCAL_HOST = "127.0.0.1";
 
+/** true si l'utilitaire est explicitement désactivé (variable vidée). */
+function helperConfigured(): boolean {
+  // Une variable définie mais vide désactive volontairement le P2P.
+  return process.env.DAHUA_P2P_HELPER === undefined
+    ? true // défaut embarqué
+    : process.env.DAHUA_P2P_HELPER.trim().length > 0;
+}
+
 export function isP2pAvailable(): boolean {
-  return Boolean(HELPER_COMMAND);
+  return helperConfigured() && Boolean(HELPER_COMMAND);
 }
 
 export type P2pStatus = {
@@ -75,6 +98,8 @@ type Tunnel = {
   idleTimer?: NodeJS.Timeout;
   /** Dernières lignes de sortie de l'utilitaire, pour le diagnostic. */
   output: string[];
+  /** Passé à true dès que le marqueur de disponibilité est vu sur la sortie. */
+  readySeen: boolean;
 };
 
 const tunnels = new Map<string, Tunnel>();
@@ -111,37 +136,53 @@ function allocatePort(): Promise<number> {
   });
 }
 
-/** Attend que le port local accepte les connexions. */
-async function waitForPort(port: number, timeoutMs: number, tunnel: Tunnel): Promise<void> {
+function portAccepts(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.connect({ host: LOCAL_HOST, port });
+    const done = (value: boolean) => {
+      socket.destroy();
+      resolve(value);
+    };
+    socket.once("connect", () => done(true));
+    socket.once("error", () => done(false));
+    socket.setTimeout(1000, () => done(false));
+  });
+}
+
+/**
+ * Attend que le tunnel soit réellement établi.
+ *
+ * Quand un marqueur de disponibilité est configuré (cas par défaut avec
+ * `dh-p2p`), on l'attend : le port local est ouvert dès le lancement, bien
+ * avant la fin du handshake, donc le seul fait qu'il réponde ne prouve rien.
+ * Sans marqueur, on retombe sur le test du port.
+ */
+async function waitForReady(port: number, timeoutMs: number, tunnel: Tunnel): Promise<void> {
   const deadline = Date.now() + timeoutMs;
+  const usesMarker = READY_PATTERN.length > 0;
 
   while (Date.now() < deadline) {
     if (tunnel.child.exitCode !== null || tunnel.child.signalCode !== null) {
       throw new DahuaError(
         "unreachable",
-        `L'utilitaire P2P s'est arrêté avant d'ouvrir le tunnel${describeOutput(tunnel)}`,
+        `L'utilitaire P2P s'est arrêté avant d'établir le tunnel${describeOutput(tunnel)}`,
       );
     }
 
-    const open = await new Promise<boolean>((resolve) => {
-      const socket = net.connect({ host: LOCAL_HOST, port });
-      const done = (value: boolean) => {
-        socket.destroy();
-        resolve(value);
-      };
-      socket.once("connect", () => done(true));
-      socket.once("error", () => done(false));
-      socket.setTimeout(1000, () => done(false));
-    });
+    if (usesMarker) {
+      if (tunnel.readySeen) return;
+    } else if (await portAccepts(port)) {
+      return;
+    }
 
-    if (open) return;
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    await new Promise((resolve) => setTimeout(resolve, usesMarker ? 100 : 250));
   }
 
   throw new DahuaError(
     "unreachable",
     `Tunnel P2P non établi après ${Math.round(timeoutMs / 1000)} s — ` +
-      `l'enregistreur est peut-être hors ligne sur le cloud Dahua${describeOutput(tunnel)}`,
+      `l'enregistreur est peut-être hors ligne sur le cloud Dahua, ` +
+      `ou exige une authentification sur le canal P2P${describeOutput(tunnel)}`,
   );
 }
 
@@ -163,11 +204,10 @@ export async function openTunnel(options: {
   username: string;
   password: string;
 }): Promise<TunnelHandle> {
-  if (!HELPER_COMMAND) {
+  if (!isP2pAvailable()) {
     throw new DahuaError(
       "unsupported",
-      "Accès P2P non configuré sur cette instance : renseigner DAHUA_P2P_HELPER " +
-        "(utilitaire ouvrant un port local à partir d'un numéro de série).",
+      "Accès P2P désactivé sur cette instance (DAHUA_P2P_HELPER vidé).",
     );
   }
   if (!options.serial) {
@@ -225,10 +265,16 @@ export async function openTunnel(options: {
     refs: 1,
     output: [],
     ready: Promise.resolve(),
+    readySeen: false,
   };
 
   const collect = (chunk: Buffer) => {
-    tunnel.output.push(chunk.toString("utf8").trim());
+    const text = chunk.toString("utf8");
+    // Le marqueur peut arriver au milieu d'un flux de lignes de log.
+    if (READY_PATTERN.length > 0 && !tunnel.readySeen && text.includes(READY_PATTERN)) {
+      tunnel.readySeen = true;
+    }
+    tunnel.output.push(text.trim());
     // On ne garde que les dernières lignes : un utilitaire bavard ne doit pas
     // faire enfler la mémoire du conteneur.
     if (tunnel.output.length > 20) tunnel.output.splice(0, tunnel.output.length - 20);
@@ -243,7 +289,7 @@ export async function openTunnel(options: {
     if (tunnels.get(options.serial) === tunnel) tunnels.delete(options.serial);
   });
 
-  tunnel.ready = waitForPort(port, READY_TIMEOUT_MS, tunnel);
+  tunnel.ready = waitForReady(port, READY_TIMEOUT_MS, tunnel);
   tunnels.set(options.serial, tunnel);
 
   try {
