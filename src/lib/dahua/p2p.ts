@@ -42,6 +42,20 @@ const IDLE_MS = Number(process.env.DAHUA_P2P_IDLE_MS ?? 120_000);
 const READY_TIMEOUT_MS = Number(process.env.DAHUA_P2P_READY_TIMEOUT_MS ?? 20_000);
 
 /**
+ * Nombre de tentatives d'établissement du tunnel.
+ *
+ * Le cloud Dahua répond depuis plusieurs serveurs en tourniquet DNS, et
+ * `dh-p2p` n'en interroge qu'un seul sans réessayer : s'il tombe sur un nœud
+ * qui ne répond pas, il s'arrête. Chaque relance refait une résolution DNS et
+ * vise donc potentiellement un autre serveur — c'est ce qui rattrape un nœud
+ * momentanément indisponible.
+ */
+const CONNECT_ATTEMPTS = Math.max(1, Number(process.env.DAHUA_P2P_CONNECT_ATTEMPTS ?? 3));
+
+/** Délai entre deux tentatives d'établissement. */
+const RETRY_DELAY_MS = Number(process.env.DAHUA_P2P_RETRY_DELAY_MS ?? 800);
+
+/**
  * Motif imprimé par l'utilitaire quand le tunnel est réellement prêt.
  *
  * `dh-p2p` ouvre son port TCP local dès le démarrage, avant même la fin du
@@ -187,8 +201,18 @@ async function waitForReady(port: number, timeoutMs: number, tunnel: Tunnel): Pr
 }
 
 function describeOutput(tunnel: Tunnel): string {
+  const parts: string[] = [];
+  const code = tunnel.child.exitCode;
+  const signal = tunnel.child.signalCode;
+  if (code !== null && code !== 0) parts.push(`arrêt code ${code}`);
+  if (signal) parts.push(`signal ${signal}`);
+
   const output = tunnel.output.join(" ").trim();
-  return output ? ` : ${output.slice(0, 300)}` : "";
+  // La cause utile (panic, erreur socket) est en FIN de sortie : on garde donc
+  // la queue plutôt que la tête, et suffisamment large pour ne pas la couper.
+  if (output) parts.push(output.length > 700 ? `…${output.slice(-700)}` : output);
+
+  return parts.length ? ` : ${parts.join(" — ")}` : "";
 }
 
 /**
@@ -233,6 +257,32 @@ export async function openTunnel(options: {
     return handleFor(existing);
   }
 
+  // Plusieurs tentatives : chaque relance de `dh-p2p` refait une résolution DNS
+  // et peut viser un autre serveur du cloud Dahua. On ne réessaie pas une erreur
+  // de configuration (binaire introuvable) ni une authentification refusée.
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= CONNECT_ATTEMPTS; attempt++) {
+    try {
+      return await establishTunnel(options);
+    } catch (error) {
+      lastError = error;
+      const reason = error instanceof DahuaError ? error.reason : undefined;
+      if (reason === "invalid" || reason === "auth" || reason === "forbidden") break;
+      if (attempt < CONNECT_ATTEMPTS) {
+        await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+      }
+    }
+  }
+  throw lastError;
+}
+
+/** Une tentative unique : lance l'utilitaire et attend l'établissement du tunnel. */
+async function establishTunnel(options: {
+  serial: string;
+  devicePort: number;
+  username: string;
+  password: string;
+}): Promise<TunnelHandle> {
   const port = await allocatePort();
   const values = {
     serial: options.serial,
