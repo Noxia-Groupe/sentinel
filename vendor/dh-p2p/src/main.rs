@@ -14,6 +14,7 @@ use crate::{
     ptcp::PTCPEvent,
 };
 
+mod auth;
 mod dh;
 mod process;
 mod ptcp;
@@ -27,6 +28,13 @@ struct Cli {
     /// Relay mode (experimental)
     #[arg(short, long)]
     relay: bool,
+    /// Device username for P2P-channel authentication (or env DAHUA_P2P_USERNAME).
+    /// Prefer the environment variable: CLI arguments are visible in the process list.
+    #[arg(long)]
+    username: Option<String>,
+    /// Device password for P2P-channel authentication (or env DAHUA_P2P_PASSWORD).
+    #[arg(long)]
+    password: Option<String>,
     /// Serial number of the camera
     serial: String,
 }
@@ -60,7 +68,17 @@ async fn main() {
 
     let socket = UdpSocket::bind("0.0.0.0:0").await.unwrap();
 
-    let (socket, session) = p2p_handshake(socket, serial, args.relay).await;
+    // Identifiants pour l'authentification du canal P2P : priorité aux variables
+    // d'environnement (invisibles dans la liste des processus), repli sur les
+    // arguments. Les deux doivent être présents pour activer l'authentification.
+    let username = args.username.or_else(|| std::env::var("DAHUA_P2P_USERNAME").ok());
+    let password = args.password.or_else(|| std::env::var("DAHUA_P2P_PASSWORD").ok());
+    let credentials = match (username, password) {
+        (Some(u), Some(p)) if !u.is_empty() && !p.is_empty() => Some((u, p)),
+        _ => None,
+    };
+
+    let (socket, session) = p2p_handshake(socket, serial, args.relay, credentials).await;
 
     let (dh_tx, dh_rx) = mpsc::channel::<PTCPEvent>(128);
     let session = Arc::new(Mutex::new(session));

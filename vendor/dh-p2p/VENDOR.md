@@ -23,14 +23,35 @@ attend le marqueur `Ready to connect` sur sa sortie, puis dirige les requêtes
 CGI vers le port local ouvert. Le tunnel est mutualisé et refermé après
 inactivité.
 
-## Mise à jour
+## Patch local : authentification du canal P2P
+
+L'amont ne gère pas l'authentification exigée par certains firmwares à la
+création du canal P2P (réponse `403 DevPwd_InvalidSalt`). On l'ajoute ici, en
+portant la recette de l'implémentation Python de référence (`helpers.py`/`main.py`
+du même dépôt, sous le même MIT) :
+
+- `src/auth.rs` — **ajout** : dérivation de clé (MD5), chiffrement d'adresse
+  (AES-256-OFB + PBKDF2-HMAC-SHA256), signature de corps (HMAC-SHA256),
+  déchiffrement du bloc `<Info>` pour lire le sel. La cryptographie est validée
+  par des vecteurs générés depuis l'implémentation de référence (`cargo test`).
+- `src/dh.rs` — **modif** : `p2p_handshake` prend des identifiants optionnels ;
+  requête `/info/device` pour le sel ; corps signés + `IpEncrptV2` sur
+  `p2p-channel` et `relay-channel` ; déchiffrement de l'adresse locale du device.
+- `src/main.rs` — **modif** : options `--username`/`--password` avec repli sur
+  `DAHUA_P2P_USERNAME`/`DAHUA_P2P_PASSWORD` (jamais en arguments côté SENTINEL).
+- `Cargo.toml` — **ajout** des crates crypto (`md-5`, `sha2`, `hmac`, `pbkdf2`,
+  `aes`, `serde_json`), toutes pures Rust (compilent en musl).
+
+Sans identifiants, le comportement d'origine (canal non authentifié) est conservé.
+
+## Mise à jour depuis l'amont
+
+Une remontée du patch d'authentification en amont serait idéale. En attendant,
+lors d'une resynchronisation, réappliquer le patch local ci-dessus par-dessus les
+sources amont (les fichiers marqués « modif » et l'ajout `src/auth.rs`) :
 
 ```sh
 git clone https://github.com/khoanguyen-3fc/dh-p2p /tmp/dh-p2p
-cp -r /tmp/dh-p2p/src /tmp/dh-p2p/Cargo.toml /tmp/dh-p2p/Cargo.lock \
-      /tmp/dh-p2p/LICENSE /tmp/dh-p2p/README.md vendor/dh-p2p/
 git -C /tmp/dh-p2p rev-parse HEAD > vendor/dh-p2p/UPSTREAM_COMMIT.txt
+# puis reporter à la main auth.rs + les modifs dh.rs / main.rs / Cargo.toml
 ```
-
-Aucune modification locale n'est apportée aux sources : tout adaptateur de
-contrat vit côté SENTINEL (`p2p.ts`), pas dans ce dossier.
