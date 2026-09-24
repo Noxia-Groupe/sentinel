@@ -214,9 +214,23 @@ pub async fn p2p_handshake(
         )
         .await;
 
+    // L'implémentation de référence lit la réponse du serveur principal à
+    // relay-channel AVANT de basculer sur l'agent. Sur un canal authentifié,
+    // certains firmwares ne poursuivent pas tant qu'elle n'est pas consommée.
+    // Timeout court : les firmwares qui n'y répondent pas ne doivent pas bloquer.
+    let _ = time::timeout(time::Duration::from_secs(3), socket2.dh_read_raw()).await;
+
     socket2.connect(agent).await.unwrap();
-    // TODO check timeout
-    socket2.dh_read().await;
+    // Réponse de l'agent, bornée dans le temps : sans elle, la traversée NAT
+    // directe échouera. Un message explicite oriente vers le mode relais.
+    if time::timeout(time::Duration::from_secs(8), socket2.dh_read_raw())
+        .await
+        .is_err()
+    {
+        println!("No response from relay agent after relay-channel (NAT traversal).");
+        println!("This device may need relay mode: set DAHUA_P2P_RELAY=1 and retry.");
+        panic!("Relay agent timeout");
+    }
 
     let mut session = PTCPSession::new();
 
