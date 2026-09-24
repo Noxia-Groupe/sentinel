@@ -3,15 +3,18 @@
 FROM node:22-alpine AS base
 
 # --- Tunnel P2P Dahua ---------------------------------------------------------
-# Compile l'utilitaire `dh-p2p` (vendoré sous vendor/dh-p2p, licence MIT) qui
+# Compile l'utilitaire `dh-fwd` (vendoré sous vendor/dh-fwd, licence MIT) qui
 # ouvre un tunnel vers un enregistreur à partir de son seul numéro de série,
-# via le cloud Dahua. On compile sur la même base musl (Alpine) que l'image Node,
-# donc le binaire tourne tel quel dans l'image finale.
-FROM rust:1-alpine AS p2p-builder
-RUN apk add --no-cache musl-dev
+# via le cloud Dahua. dh-fwd gère les firmwares postérieurs à 2024.07 (canal
+# authentifié + dialecte DMSS/SmartPSS) là où l'ancien `dh-p2p` échouait par un
+# `403 DevPwd_InvalidNonce`. Voir vendor/dh-fwd/VENDOR.md.
+#
+# Dépendances Go figées sous vendor/ : build hermétique, sans accès réseau.
+# CGO désactivé → binaire statique, indépendant de la libc de l'image finale.
+FROM golang:1.25-alpine AS p2p-builder
 WORKDIR /build
-COPY vendor/dh-p2p/ ./
-RUN cargo build --release
+COPY vendor/dh-fwd/ ./
+RUN CGO_ENABLED=0 go build -mod=vendor -trimpath -ldflags="-s -w" -o /usr/local/bin/dh-fwd .
 
 # Install dependencies
 FROM base AS deps
@@ -42,7 +45,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN apk add --no-cache postgresql-client
 
 # Utilitaire de tunnel P2P, joignable via le défaut DAHUA_P2P_HELPER.
-COPY --from=p2p-builder /build/target/release/dh-p2p /usr/local/bin/dh-p2p
+COPY --from=p2p-builder /usr/local/bin/dh-fwd /usr/local/bin/dh-fwd
 
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs

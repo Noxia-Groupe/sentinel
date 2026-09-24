@@ -1,0 +1,9 @@
+# Built binaries — the image builds dh-fwd fresh (see Dockerfile).
+dh-fwd
+dh-fwd.exe
+*.exe
+*.bin
+builds/
+
+# Logs
+*.log
