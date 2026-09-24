@@ -26,14 +26,17 @@ import { DahuaError } from "./http";
 
 /**
  * Commande à lancer, avec substitution de `{serial}`, `{port}` (port local à
- * ouvrir), `{host}` et `{devicePort}` (port visé sur l'équipement).
+ * ouvrir sur 127.0.0.1) et `{devicePort}` (port visé sur l'équipement).
  *
- * Défaut : l'utilitaire `dh-p2p` embarqué dans l'image (voir Dockerfile), dont
- * le contrat est `--port [bind:]port:remote_port <serial>`.
+ * Défaut : l'utilitaire `dh-fwd` embarqué dans l'image (voir Dockerfile et
+ * vendor/dh-fwd/VENDOR.md), dont le contrat est `<serial> -p local:remote`.
+ * Les identifiants, le profil applicatif (`DAHUA_P2P_PROFILE`) et le mode
+ * relais (`DAHUA_P2P_RELAY`) lui sont transmis par l'environnement — jamais en
+ * arguments (argv est lisible dans la liste des processus).
  */
 const HELPER_COMMAND =
   process.env.DAHUA_P2P_HELPER?.trim() ||
-  "/usr/local/bin/dh-p2p --port {host}:{port}:{devicePort} {serial}";
+  "/usr/local/bin/dh-fwd {serial} -p {port}:{devicePort}";
 
 /** Durée d'inactivité au bout de laquelle le tunnel est refermé. */
 const IDLE_MS = Number(process.env.DAHUA_P2P_IDLE_MS ?? 120_000);
@@ -44,11 +47,10 @@ const READY_TIMEOUT_MS = Number(process.env.DAHUA_P2P_READY_TIMEOUT_MS ?? 20_000
 /**
  * Nombre de tentatives d'établissement du tunnel.
  *
- * Le cloud Dahua répond depuis plusieurs serveurs en tourniquet DNS, et
- * `dh-p2p` n'en interroge qu'un seul sans réessayer : s'il tombe sur un nœud
- * qui ne répond pas, il s'arrête. Chaque relance refait une résolution DNS et
- * vise donc potentiellement un autre serveur — c'est ce qui rattrape un nœud
- * momentanément indisponible.
+ * Le cloud Dahua répond depuis plusieurs serveurs en tourniquet DNS : si
+ * l'utilitaire tombe sur un nœud qui ne répond pas, il s'arrête. Chaque relance
+ * refait une résolution DNS et vise donc potentiellement un autre serveur —
+ * c'est ce qui rattrape un nœud momentanément indisponible.
  */
 const CONNECT_ATTEMPTS = Math.max(1, Number(process.env.DAHUA_P2P_CONNECT_ATTEMPTS ?? 3));
 
@@ -58,14 +60,17 @@ const RETRY_DELAY_MS = Number(process.env.DAHUA_P2P_RETRY_DELAY_MS ?? 800);
 /**
  * Motif imprimé par l'utilitaire quand le tunnel est réellement prêt.
  *
- * `dh-p2p` ouvre son port TCP local dès le démarrage, avant même la fin du
+ * L'utilitaire ouvre son port TCP local dès le démarrage, avant même la fin du
  * handshake P2P : se fier au seul port ouvert conclurait « prêt » trop tôt et
  * la première requête resterait bloquée le temps du handshake. On attend donc
  * ce marqueur sur la sortie de l'utilitaire, avec repli sur le test du port
  * quand aucun marqueur n'est configuré (chaîne vide).
+ *
+ * `dh-fwd` imprime « Listening on :<port> -> :<remote> » une fois le tunnel
+ * établi.
  */
 const READY_PATTERN =
-  process.env.DAHUA_P2P_READY_PATTERN ?? "Ready to connect";
+  process.env.DAHUA_P2P_READY_PATTERN ?? "Listening on";
 
 const LOCAL_HOST = "127.0.0.1";
 
@@ -167,7 +172,7 @@ function portAccepts(port: number): Promise<boolean> {
  * Attend que le tunnel soit réellement établi.
  *
  * Quand un marqueur de disponibilité est configuré (cas par défaut avec
- * `dh-p2p`), on l'attend : le port local est ouvert dès le lancement, bien
+ * `dh-fwd`), on l'attend : le port local est ouvert dès le lancement, bien
  * avant la fin du handshake, donc le seul fait qu'il réponde ne prouve rien.
  * Sans marqueur, on retombe sur le test du port.
  */
@@ -257,9 +262,9 @@ export async function openTunnel(options: {
     return handleFor(existing);
   }
 
-  // Plusieurs tentatives : chaque relance de `dh-p2p` refait une résolution DNS
-  // et peut viser un autre serveur du cloud Dahua. On ne réessaie pas une erreur
-  // de configuration (binaire introuvable) ni une authentification refusée.
+  // Plusieurs tentatives : chaque relance refait une résolution DNS et peut
+  // viser un autre serveur du cloud Dahua. On ne réessaie pas une erreur de
+  // configuration (binaire introuvable) ni une authentification refusée.
   let lastError: unknown;
   for (let attempt = 1; attempt <= CONNECT_ATTEMPTS; attempt++) {
     try {
@@ -304,6 +309,11 @@ async function establishTunnel(options: {
       DAHUA_P2P_PASSWORD: options.password,
       DAHUA_P2P_LOCAL_PORT: String(port),
       DAHUA_P2P_DEVICE_PORT: String(options.devicePort),
+      // Profil applicatif dh-fwd : `dmss` par défaut (équipements enrôlés via
+      // l'application DMSS, cas des NVR postérieurs à 2024). Passer à
+      // `smartpss` si le cloud renvoie un 404 (équipement enregistré côté
+      // SmartPSS). Une valeur déjà fixée dans l'environnement l'emporte.
+      DAHUA_P2P_PROFILE: process.env.DAHUA_P2P_PROFILE?.trim() || "dmss",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });

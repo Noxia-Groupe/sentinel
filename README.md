@@ -195,50 +195,62 @@ centre d'alarme. Le reste du code ne voit qu'un hôte et un port.
 
 L'établissement du tunnel est la seule partie déléguée. Le transport Dahua
 (PTCP, de l'encapsulage TCP-dans-UDP) n'est pas documenté publiquement : SENTINEL
-délègue donc cette étape à l'utilitaire **`dh-p2p`** (implémentation
-communautaire du protocole, licence MIT, [khoanguyen-3fc/dh-p2p](https://github.com/khoanguyen-3fc/dh-p2p)),
-**vendoré sous `vendor/dh-p2p/` et compilé dans l'image Docker** (voir le
-`Dockerfile`). Son contrat tient en une ligne : *à partir d'un numéro de série,
-ouvrir un port TCP local qui aboutit sur l'équipement*.
+délègue donc cette étape à l'utilitaire **`dh-fwd`** (implémentation
+communautaire du protocole, licence MIT, [undervolter/dh-fwd](https://github.com/undervolter/dh-fwd)),
+**vendoré sous `vendor/dh-fwd/` et compilé dans l'image Docker** (voir le
+`Dockerfile` et `vendor/dh-fwd/VENDOR.md`). Son contrat tient en une ligne :
+*à partir d'un numéro de série, ouvrir un port TCP local qui aboutit sur
+l'équipement*. Contrairement à l'ancienne preuve de concept `dh-p2p` (toujours
+présente sous `vendor/dh-p2p/` pour référence, mais plus compilée), `dh-fwd`
+gère les firmwares **postérieurs à 2024.07**, qui exigent un canal authentifié
+et le dialecte de requête exact du client officiel.
 
 Il n'y a **rien à configurer** : le défaut ci-dessous s'applique
 automatiquement. On ne surcharge `DAHUA_P2P_HELPER` que pour pointer un autre
 utilitaire (par exemple un habillage du SDK réseau officiel `libdhnetsdk`).
 
 ```env
-DAHUA_P2P_HELPER="/usr/local/bin/dh-p2p --port {host}:{port}:{devicePort} {serial}"
+DAHUA_P2P_HELPER="/usr/local/bin/dh-fwd {serial} -p {port}:{devicePort}"
 ```
 
-Substitutions disponibles : `{serial}`, `{host}`, `{port}` (port local ouvert)
-et `{devicePort}` (port visé sur l'équipement, soit `httpPort`). Pour un autre
-utilitaire, les identifiants sont aussi exposés dans son environnement —
-`DAHUA_P2P_USERNAME`, `DAHUA_P2P_PASSWORD`, `DAHUA_P2P_SERIAL`,
-`DAHUA_P2P_LOCAL_PORT`, `DAHUA_P2P_DEVICE_PORT` — et **jamais** en arguments, qui
-seraient lisibles dans la liste des processus.
+Substitutions disponibles : `{serial}`, `{port}` (port local ouvert) et
+`{devicePort}` (port visé sur l'équipement, soit `httpPort`). Les identifiants et
+les réglages sont exposés à l'utilitaire par son **environnement** —
+`DAHUA_P2P_USERNAME`, `DAHUA_P2P_PASSWORD`, `DAHUA_P2P_PROFILE`,
+`DAHUA_P2P_RELAY`, `DAHUA_P2P_SERIAL`, `DAHUA_P2P_LOCAL_PORT`,
+`DAHUA_P2P_DEVICE_PORT` — et **jamais** en arguments, qui seraient lisibles dans
+la liste des processus.
 
-`dh-p2p` ouvre son port TCP local dès son démarrage, avant la fin du handshake :
-SENTINEL attend donc le marqueur `Ready to connect` sur sa sortie
+`dh-fwd` ouvre son port TCP local dès son démarrage, avant la fin du handshake :
+SENTINEL attend donc le marqueur `Listening on` sur sa sortie
 (`DAHUA_P2P_READY_PATTERN`) avant d'émettre la moindre requête. Le tunnel est
 mutualisé entre les appels concurrents et refermé après `DAHUA_P2P_IDLE_MS`
 d'inactivité : une rafale d'appels sur le même enregistreur n'ouvre qu'une
 session cloud.
 
-Deux prérequis réseau côté serveur, tous deux satisfaits par un VPS au sortant
-ouvert : joindre le cloud Dahua en **UDP** vers `*.easy4ipcloud.com:8800`, et
+**Profil applicatif.** Dahua utilise des serveurs cloud distincts selon
+l'application d'enrôlement. `DAHUA_P2P_PROFILE` sélectionne le dialecte :
+`dmss` (défaut, cloud Dolynk — équipement enrôlé via l'application **DMSS**,
+cas des NVR récents) ou `smartpss` (cloud easy4ip — enrôlé via **SmartPSS**).
+Un mauvais profil fait répondre le cloud par un **404** : il suffit alors de
+basculer sur l'autre valeur.
+
+**Authentification post-2024.** Les firmwares récents exigent un canal
+authentifié : sans le bon dialecte, ils répondent `403 DevPwd_InvalidNonce` /
+`DevPwd_InvalidDigest` même avec une cryptographie de corps correcte. `dh-fwd`
+lit le sel du device, dérive la clé, signe les requêtes et reproduit l'ordre
+d'en-têtes attendu par l'application ; le profil `dmss` évite en plus l'étape de
+*relay-channel* qui provoquait un `Relay agent timeout`. SENTINEL lui passe
+simplement les identifiants enregistrés par l'environnement. Sans identifiants,
+le canal reste ouvert en clair (firmwares anciens).
+
+Prérequis réseau côté serveur, satisfaits par un VPS au sortant ouvert : joindre
+le cloud Dahua en **UDP** (Dolynk pour `dmss`, easy4ip pour `smartpss`) et
 laisser sortir le trafic UDP vers les adresses que le cloud renvoie (le pair est
 choisi dynamiquement). Si le tunnel ne s'établit pas, l'interface affiche la
-sortie de `dh-p2p` et le motif `unreachable`.
+sortie de `dh-fwd` et le motif `unreachable`.
 
-Les firmwares qui exigent une **authentification à la création du canal P2P**
-(réponse `403 DevPwd_InvalidSalt`) sont pris en charge : SENTINEL passe les
-identifiants enregistrés à l'utilitaire (par l'environnement), qui lit le sel du
-device, dérive la clé et signe l'ouverture du canal. C'est un patch local à
-`dh-p2p` (voir `vendor/dh-p2p/VENDOR.md`), dont la cryptographie est validée par
-vecteurs de test. Sans identifiants, le canal reste ouvert en clair comme avant.
-
-Après authentification, le tunnel tente par défaut une **connexion directe** à
-l'équipement. Derrière un NAT qui la bloque (le handshake reste alors muet à la
-phase relais, symptôme `Relay agent timeout`), activer le **mode relais** —
+Derrière un NAT qui bloque la connexion directe, activer le **mode relais** —
 `DAHUA_P2P_RELAY=1` — qui fait transiter le trafic par le serveur relais Dahua :
 plus lent mais robuste, et suffisant pour la maintenance (requêtes courtes).
 

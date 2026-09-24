@@ -44,5 +44,6 @@ next-env.d.ts
 
 /src/generated/prisma
 
-# rust build artifacts (dh-p2p vendored)
+# build artifacts des utilitaires vendorés (dh-p2p Rust, binaires dh-fwd Go)
 /vendor/**/target
+/vendor/dh-fwd/dh-fwd
