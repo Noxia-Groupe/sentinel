@@ -194,37 +194,50 @@ stockés dans la plateforme, puis **toutes les fonctions marchent à l'identique
 centre d'alarme. Le reste du code ne voit qu'un hôte et un port.
 
 L'établissement du tunnel est la seule partie déléguée. Le transport Dahua
-(PTCP, de l'encapsulage TCP-dans-UDP) n'est pas documenté publiquement et ne
-s'implémente pas de but en blanc : SENTINEL appelle donc un utilitaire externe
-dont le contrat tient en une ligne — *à partir d'un numéro de série, ouvrir un
-port TCP local qui aboutit sur l'équipement*.
+(PTCP, de l'encapsulage TCP-dans-UDP) n'est pas documenté publiquement : SENTINEL
+délègue donc cette étape à l'utilitaire **`dh-p2p`** (implémentation
+communautaire du protocole, licence MIT, [khoanguyen-3fc/dh-p2p](https://github.com/khoanguyen-3fc/dh-p2p)),
+**vendoré sous `vendor/dh-p2p/` et compilé dans l'image Docker** (voir le
+`Dockerfile`). Son contrat tient en une ligne : *à partir d'un numéro de série,
+ouvrir un port TCP local qui aboutit sur l'équipement*.
+
+Il n'y a **rien à configurer** : le défaut ci-dessous s'applique
+automatiquement. On ne surcharge `DAHUA_P2P_HELPER` que pour pointer un autre
+utilitaire (par exemple un habillage du SDK réseau officiel `libdhnetsdk`).
 
 ```env
-DAHUA_P2P_HELPER="dh-p2p --serial {serial} --bind {host}:{port} --remote {devicePort}"
+DAHUA_P2P_HELPER="/usr/local/bin/dh-p2p --port {host}:{port}:{devicePort} {serial}"
 ```
 
-Substitutions disponibles : `{serial}`, `{host}`, `{port}` (port local à ouvrir)
-et `{devicePort}` (port visé sur l'équipement, soit `httpPort`). Les
-identifiants ne sont **jamais** passés en arguments — ils seraient lisibles dans
-la liste des processus — mais dans l'environnement du programme :
+Substitutions disponibles : `{serial}`, `{host}`, `{port}` (port local ouvert)
+et `{devicePort}` (port visé sur l'équipement, soit `httpPort`). Pour un autre
+utilitaire, les identifiants sont aussi exposés dans son environnement —
 `DAHUA_P2P_USERNAME`, `DAHUA_P2P_PASSWORD`, `DAHUA_P2P_SERIAL`,
-`DAHUA_P2P_LOCAL_PORT`, `DAHUA_P2P_DEVICE_PORT`.
+`DAHUA_P2P_LOCAL_PORT`, `DAHUA_P2P_DEVICE_PORT` — et **jamais** en arguments, qui
+seraient lisibles dans la liste des processus.
 
-Deux utilitaires possibles :
+`dh-p2p` ouvre son port TCP local dès son démarrage, avant la fin du handshake :
+SENTINEL attend donc le marqueur `Ready to connect` sur sa sortie
+(`DAHUA_P2P_READY_PATTERN`) avant d'émettre la moindre requête. Le tunnel est
+mutualisé entre les appels concurrents et refermé après `DAHUA_P2P_IDLE_MS`
+d'inactivité : une rafale d'appels sur le même enregistreur n'ouvre qu'une
+session cloud.
 
-- le **SDK réseau officiel Dahua** (`libdhnetsdk`), à récupérer sur le portail
-  développeur, enveloppé dans un petit binaire qui expose le port local ;
-- une **implémentation communautaire** du protocole, par exemple
-  [`khoanguyen-3fc/dh-p2p`](https://github.com/khoanguyen-3fc/dh-p2p), qui fait
-  exactement ce tunneling TCP à partir d'un numéro de série.
+Deux prérequis réseau côté serveur, tous deux satisfaits par un VPS au sortant
+ouvert : joindre le cloud Dahua en **UDP** vers `*.easy4ipcloud.com:8800`, et
+laisser sortir le trafic UDP vers les adresses que le cloud renvoie (le pair est
+choisi dynamiquement). Si le tunnel ne s'établit pas, l'interface affiche la
+sortie de `dh-p2p` et le motif `unreachable`.
 
-Le tunnel est mutualisé entre les appels concurrents et refermé après
-`DAHUA_P2P_IDLE_MS` d'inactivité : une rafale d'appels sur le même enregistreur
-n'ouvre qu'une session cloud.
+Une limite connue : `dh-p2p` n'implémente pas l'authentification sur la création
+du canal P2P (certains firmwares récents l'exigent et répondent `403`). Le cas
+courant — canal ouvert, puis authentification CGI par-dessus le tunnel — est
+couvert. Si un enregistreur du parc réclame l'auth de canal, c'est l'étape
+suivante à ajouter.
 
-Sans `DAHUA_P2P_HELPER`, un NVR P2P reste déclarable et continue de remonter ses
-alarmes par webhook ; l'interface indique simplement que les tests et les
-interventions demandent l'activation de l'accès P2P (motif `unsupported`).
+Avec `DAHUA_P2P_HELPER` **vidé**, un NVR P2P reste déclarable et continue de
+remonter ses alarmes par webhook ; l'interface indique alors que les tests et
+les interventions demandent l'activation de l'accès P2P (motif `unsupported`).
 
 > **Le numéro de série est un secret.** Sur les firmwares antérieurs à
 > mi-2024, il suffit à ouvrir un tunnel vers la console web d'un équipement

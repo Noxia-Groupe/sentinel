@@ -34,9 +34,11 @@ services:
       ADMIN_EMAILS: ${ADMIN_EMAILS}
       # Adresse déclarée aux NVR comme centre d'alarme (défaut : NEXTAUTH_URL).
       ALARM_CENTER_URL: ${ALARM_CENTER_URL:-}
-      # Utilitaire d'ouverture des tunnels P2P — vide = accès P2P désactivé.
-      # Le binaire correspondant doit être présent dans l'image.
-      DAHUA_P2P_HELPER: ${DAHUA_P2P_HELPER:-}
+      # Tunnel P2P : l'utilitaire `dh-p2p` embarqué dans l'image est utilisé par
+      # défaut. On ne surcharge DAHUA_P2P_HELPER que pour pointer un autre
+      # utilitaire — une valeur VIDE désactiverait le P2P, donc on met le défaut
+      # embarqué comme repli d'interpolation plutôt qu'une chaîne vide.
+      DAHUA_P2P_HELPER: ${DAHUA_P2P_HELPER:-/usr/local/bin/dh-p2p --port {host}:{port}:{devicePort} {serial}}
     networks:
       - nginx-proxy
 
