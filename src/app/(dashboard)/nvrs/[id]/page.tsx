@@ -16,6 +16,7 @@ import {
   HardDrive,
   KeyRound,
   Loader2,
+  Pencil,
   Plug,
   Power,
   RefreshCw,
@@ -160,12 +161,24 @@ export default function NvrDetailPage() {
   const [revealed, setRevealed] = useState<Record<string, string>>({});
   const [addCredOpen, setAddCredOpen] = useState(false);
   const [newCred, setNewCred] = useState({ type: "telesurveilleur", username: "", password: "" });
+  const [editOpen, setEditOpen] = useState(false);
+  const [clients, setClients] = useState<{ id: string; name: string }[]>([]);
 
   const fetchNvr = useCallback(async () => {
     const res = await fetch(`/api/nvrs/${nvrId}`);
     if (res.ok) setNvr(await res.json());
     setLoading(false);
   }, [nvrId]);
+
+  useEffect(() => {
+    void (async () => {
+      const res = await fetch("/api/clients");
+      if (res.ok) {
+        const data: { id: string; name: string }[] = await res.json();
+        setClients(data.map(({ id, name }) => ({ id, name })));
+      }
+    })();
+  }, []);
 
   useEffect(() => {
     void fetchNvr();
@@ -309,6 +322,14 @@ export default function NvrDetailPage() {
             {nvr.status === "online" ? "En ligne" : nvr.status === "offline" ? "Hors ligne" : "Inconnu"}
           </Badge>
           <Button
+            variant="outline"
+            onClick={() => setEditOpen(true)}
+            className="border-[#132255] bg-[#0a1130] text-[#dde1e4] hover:bg-[#132255]"
+          >
+            <Pencil className="h-4 w-4" />
+            Modifier
+          </Button>
+          <Button
             onClick={() => void runTest()}
             disabled={testing || unreachable}
             className="bg-[#0251a1] hover:bg-[#0363c2]"
@@ -318,6 +339,17 @@ export default function NvrDetailPage() {
           </Button>
         </div>
       </div>
+
+      <EditNvrDialog
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        nvr={nvr}
+        clients={clients}
+        onSaved={() => {
+          setEditOpen(false);
+          void fetchNvr();
+        }}
+      />
 
       {isP2p &&
         (nvr.p2p.available ? (
@@ -1264,6 +1296,257 @@ function AlarmCenterProvisioning({ nvrId, disabled }: { nvrId: string; disabled:
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+/** Formulaire d'édition des informations d'un enregistreur. */
+function EditNvrDialog({
+  open,
+  onOpenChange,
+  nvr,
+  clients,
+  onSaved,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  nvr: NvrDetail;
+  clients: { id: string; name: string }[];
+  onSaved: () => void;
+}) {
+  const [form, setForm] = useState({
+    name: nvr.name,
+    clientId: nvr.client?.id ?? "",
+    connectionMode: nvr.connectionMode === "p2p" ? "p2p" : "ip",
+    ip: nvr.ip ?? "",
+    httpPort: nvr.httpPort,
+    port: nvr.port,
+    useHttps: nvr.useHttps,
+    p2pSerial: nvr.p2pSerial ?? "",
+    serialNumber: nvr.serialNumber ?? "",
+    model: nvr.model ?? "",
+    location: nvr.location ?? "",
+    notes: nvr.notes ?? "",
+  });
+  const [saving, setSaving] = useState(false);
+
+  // Réaligner le formulaire quand on rouvre le dialogue ou que le NVR change.
+  useEffect(() => {
+    if (open) {
+      setForm({
+        name: nvr.name,
+        clientId: nvr.client?.id ?? "",
+        connectionMode: nvr.connectionMode === "p2p" ? "p2p" : "ip",
+        ip: nvr.ip ?? "",
+        httpPort: nvr.httpPort,
+        port: nvr.port,
+        useHttps: nvr.useHttps,
+        p2pSerial: nvr.p2pSerial ?? "",
+        serialNumber: nvr.serialNumber ?? "",
+        model: nvr.model ?? "",
+        location: nvr.location ?? "",
+        notes: nvr.notes ?? "",
+      });
+    }
+  }, [open, nvr]);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/nvrs/${nvr.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: form.name,
+          clientId: form.clientId || null,
+          connectionMode: form.connectionMode,
+          ip: form.connectionMode === "ip" ? form.ip : null,
+          httpPort: form.httpPort,
+          port: form.port,
+          useHttps: form.useHttps,
+          p2pSerial: form.connectionMode === "p2p" ? form.p2pSerial : null,
+          serialNumber: form.serialNumber || null,
+          model: form.model || null,
+          location: form.location || null,
+          notes: form.notes || null,
+        }),
+      });
+      if (res.ok) {
+        toast.success("Enregistreur mis à jour");
+        onSaved();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.error ?? "Mise à jour impossible");
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const valid =
+    form.name.trim() && (form.connectionMode === "ip" ? form.ip.trim() : form.p2pSerial.trim());
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="border-[#132255] bg-[#0d1537] text-[#dde1e4] max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Modifier l&apos;enregistreur</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 mt-4">
+          <div className="space-y-2">
+            <Label>Nom *</Label>
+            <Input
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              className="bg-[#080d24] border-[#132255]"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Client</Label>
+            <Select
+              value={form.clientId}
+              onValueChange={(v) => setForm({ ...form, clientId: v ?? "" })}
+            >
+              <SelectTrigger className="bg-[#080d24] border-[#132255]">
+                <SelectValue placeholder="Non affecté" />
+              </SelectTrigger>
+              <SelectContent className="bg-[#080d24] border-[#132255]">
+                {clients.map((client) => (
+                  <SelectItem key={client.id} value={client.id}>
+                    {client.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Mode de connexion</Label>
+            <div className="grid grid-cols-2 gap-2">
+              {(["ip", "p2p"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setForm({ ...form, connectionMode: mode })}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium border transition-all ${
+                    form.connectionMode === mode
+                      ? "bg-[#0251a1] border-[#0251a1] text-white"
+                      : "bg-[#080d24] border-[#132255] text-[#8896b4] hover:border-[#0251a1]/50"
+                  }`}
+                >
+                  {mode === "ip" ? "IP directe" : "P2P Dahua"}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {form.connectionMode === "ip" ? (
+            <div className="grid grid-cols-3 gap-3">
+              <div className="space-y-2 col-span-3 sm:col-span-1">
+                <Label>Adresse IP *</Label>
+                <Input
+                  value={form.ip}
+                  onChange={(e) => setForm({ ...form, ip: e.target.value })}
+                  className="bg-[#080d24] border-[#132255] font-mono"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Port API web</Label>
+                <Input
+                  type="number"
+                  value={form.httpPort}
+                  onChange={(e) => setForm({ ...form, httpPort: Number(e.target.value) })}
+                  className="bg-[#080d24] border-[#132255]"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Port SDK</Label>
+                <Input
+                  type="number"
+                  value={form.port}
+                  onChange={(e) => setForm({ ...form, port: Number(e.target.value) })}
+                  className="bg-[#080d24] border-[#132255]"
+                />
+              </div>
+              <label className="flex items-center gap-2 text-sm text-[#8896b4] col-span-3">
+                <input
+                  type="checkbox"
+                  checked={form.useHttps}
+                  onChange={(e) => setForm({ ...form, useHttps: e.target.checked })}
+                  className="accent-[#0251a1]"
+                />
+                Interface web en HTTPS
+              </label>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <Label>N° de série P2P *</Label>
+              <Input
+                value={form.p2pSerial}
+                onChange={(e) => setForm({ ...form, p2pSerial: e.target.value })}
+                className="bg-[#080d24] border-[#132255] font-mono"
+              />
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-2">
+              <Label>N° de série</Label>
+              <Input
+                value={form.serialNumber}
+                onChange={(e) => setForm({ ...form, serialNumber: e.target.value })}
+                className="bg-[#080d24] border-[#132255] font-mono"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Modèle</Label>
+              <Input
+                placeholder="DHI-NVR5208-8P-EI"
+                value={form.model}
+                onChange={(e) => setForm({ ...form, model: e.target.value })}
+                className="bg-[#080d24] border-[#132255]"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Emplacement</Label>
+            <Input
+              value={form.location}
+              onChange={(e) => setForm({ ...form, location: e.target.value })}
+              className="bg-[#080d24] border-[#132255]"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Notes</Label>
+            <Input
+              value={form.notes}
+              onChange={(e) => setForm({ ...form, notes: e.target.value })}
+              className="bg-[#080d24] border-[#132255]"
+            />
+          </div>
+
+          <div className="flex justify-end gap-3 pt-2">
+            <Button
+              variant="secondary"
+              onClick={() => onOpenChange(false)}
+              className="bg-[#132255] hover:bg-[#1a2d66]"
+            >
+              Annuler
+            </Button>
+            <Button
+              onClick={() => void save()}
+              disabled={!valid || saving}
+              className="bg-[#0251a1] hover:bg-[#0363c2]"
+            >
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              Enregistrer
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
