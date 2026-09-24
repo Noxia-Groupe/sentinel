@@ -14,3 +14,10 @@ rand = "0.8.5"
 sha1 = "0.10.6"
 tokio = { version = "1", features = ["full"] }
 xml-rs = "0.8.19"
+# Authentification du canal P2P (patch local Sentinel, voir VENDOR.md)
+md-5 = "0.10.6"
+sha2 = "0.10.8"
+hmac = "0.12.1"
+pbkdf2 = "0.12.2"
+aes = "0.8.4"
+serde_json = "1.0"

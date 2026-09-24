@@ -229,11 +229,12 @@ laisser sortir le trafic UDP vers les adresses que le cloud renvoie (le pair est
 choisi dynamiquement). Si le tunnel ne s'établit pas, l'interface affiche la
 sortie de `dh-p2p` et le motif `unreachable`.
 
-Une limite connue : `dh-p2p` n'implémente pas l'authentification sur la création
-du canal P2P (certains firmwares récents l'exigent et répondent `403`). Le cas
-courant — canal ouvert, puis authentification CGI par-dessus le tunnel — est
-couvert. Si un enregistreur du parc réclame l'auth de canal, c'est l'étape
-suivante à ajouter.
+Les firmwares qui exigent une **authentification à la création du canal P2P**
+(réponse `403 DevPwd_InvalidSalt`) sont pris en charge : SENTINEL passe les
+identifiants enregistrés à l'utilitaire (par l'environnement), qui lit le sel du
+device, dérive la clé et signe l'ouverture du canal. C'est un patch local à
+`dh-p2p` (voir `vendor/dh-p2p/VENDOR.md`), dont la cryptographie est validée par
+vecteurs de test. Sans identifiants, le canal reste ouvert en clair comme avant.
 
 Avec `DAHUA_P2P_HELPER` **vidé**, un NVR P2P reste déclarable et continue de
 remonter ses alarmes par webhook ; l'interface indique alors que les tests et

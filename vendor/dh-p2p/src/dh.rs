@@ -5,6 +5,7 @@ use std::{collections::HashMap, net::SocketAddrV4};
 use tokio::{net::UdpSocket, time};
 use xml::reader::{EventReader, XmlEvent};
 
+use crate::auth;
 use crate::ptcp::{PTCPBody, PTCPSession, PTCP};
 
 static MAIN_SERVER: &str = "www.easy4ipcloud.com:8800";
@@ -28,6 +29,7 @@ pub async fn p2p_handshake(
     socket: UdpSocket,
     serial: String,
     relay_mode: bool,
+    credentials: Option<(String, String)>,
 ) -> (UdpSocket, PTCPSession) {
     let mut cseq = 0;
 
@@ -60,8 +62,9 @@ pub async fn p2p_handshake(
         .await;
     socket2.dh_read().await;
 
-    /*
-    TODO add support for device info request
+    // /info/device : bloc <Info> chiffré d'où l'on tire le « sel » (randsalt)
+    // requis par l'authentification du canal. Certains firmwares répondent en
+    // erreur ici — l'absence de sel est tolérée (auth alors sans <RandSalt>).
     socket2
         .dh_request(
             format!("/info/device/{}", serial).as_ref(),
@@ -69,19 +72,60 @@ pub async fn p2p_handshake(
             &mut cseq,
         )
         .await;
-    socket2.dh_read().await;
-    */
+    let info_res = socket2.dh_read_raw().await;
+    let randsalt = if info_res.code < 300 {
+        info_res
+            .body
+            .and_then(|b| b.get("body/Info").cloned())
+            .map(|info| auth::randsalt_from_info(&info))
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    // Clé et nonce d'authentification, calculés une fois si des identifiants
+    // sont fournis. Sans identifiants, le canal reste non authentifié.
+    let auth_key = credentials
+        .as_ref()
+        .map(|(u, p)| auth::device_key(u, p, &randsalt));
+    let my_nonce: u64 = (rand::random::<u32>() >> 1) as u64;
 
     let cid: [u8; 8] = rand::random();
+    let identify = cid
+        .iter()
+        .map(|b| format!("{:x}", b))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let local_addr = format!("127.0.0.1:{}", socket.local_addr().unwrap().port());
+
+    // Canal authentifié (IpEncrptV2 + corps signé) si l'on a des identifiants,
+    // sinon canal en clair comme l'implémentation d'origine.
+    let p2p_body = match (credentials.as_ref(), auth_key.as_ref()) {
+        (Some((username, _)), Some(key)) => {
+            let enc_addr = auth::enc_local_addr(key, my_nonce, &local_addr);
+            let auth_xml = auth::device_auth(
+                username,
+                key,
+                my_nonce,
+                chrono::Utc::now().timestamp(),
+                &randsalt,
+                &enc_addr,
+            );
+            format!(
+                "<body>{}<Identify>{}</Identify><IpEncrptV2>true</IpEncrptV2><LocalAddr>{}</LocalAddr><version>5.0.0</version></body>",
+                auth_xml, identify, enc_addr
+            )
+        }
+        _ => format!(
+            "<body><Identify>{}</Identify><IpEncrpt>true</IpEncrpt><LocalAddr>{}</LocalAddr><version>5.0.0</version></body>",
+            identify, local_addr
+        ),
+    };
 
     socket
         .dh_request(
             format!("/device/{}/p2p-channel", serial).as_ref(),
-            Some(format!(
-                "<body><Identify>{}</Identify><IpEncrpt>true</IpEncrpt><LocalAddr>127.0.0.1:{}</LocalAddr><version>5.0.0</version></body>",
-                cid.iter().map(|b| format!("{:x}", b)).collect::<Vec<_>>().join(" "),
-                socket.local_addr().unwrap().port(),
-            ).as_ref()),
+            Some(&p2p_body),
             &mut cseq,
         )
         .await;
@@ -112,26 +156,60 @@ pub async fn p2p_handshake(
 
     if res.code >= 400 {
         if res.code == 403 {
-            println!("Device requires authentication when creating P2P channel.");
-            println!("Authentication is not supported at this time.");
+            if credentials.is_some() {
+                println!("Device rejected P2P-channel authentication (bad credentials or salt).");
+            } else {
+                println!("Device requires authentication when creating P2P channel.");
+                println!("Provide credentials (--username/--password or the DAHUA_P2P_* env).");
+            }
         }
 
         panic!("Error response: {}", res.status);
     }
 
     let data = res.body.unwrap();
-    let device_laddr = &data["body/LocalAddr"];
-    let device = &data["body/PubAddr"];
+    let device: String = data["body/PubAddr"].clone();
+
+    // L'adresse locale du device est chiffrée avec SON nonce quand le canal est
+    // authentifié ; ce même nonce signera ensuite la requête relay-channel.
+    let (device_laddr, dev_nonce): (String, u64) = match auth_key.as_ref() {
+        Some(key) => {
+            let dev_nonce = data
+                .get("body/Nonce")
+                .and_then(|n| n.parse::<u64>().ok())
+                .unwrap_or(0);
+            (
+                auth::dec_local_addr(key, dev_nonce, &data["body/LocalAddr"]),
+                dev_nonce,
+            )
+        }
+        None => (data["body/LocalAddr"].clone(), 0),
+    };
 
     // not necessary when relay_mode is true, but UDP is connectionless
-    socket.connect(device).await.unwrap();
+    socket.connect(&device).await.unwrap();
 
     socket2.connect(MAIN_SERVER).await.unwrap();
+
+    let relay_body = match (credentials.as_ref(), auth_key.as_ref()) {
+        (Some((username, _)), Some(key)) => {
+            let auth_xml = auth::device_auth(
+                username,
+                key,
+                dev_nonce,
+                chrono::Utc::now().timestamp(),
+                &randsalt,
+                "",
+            );
+            format!("<body>{}<agentAddr>{}</agentAddr></body>", auth_xml, agent)
+        }
+        _ => format!("<body><agentAddr>{}</agentAddr></body>", agent),
+    };
 
     socket2
         .dh_request(
             format!("/device/{}/relay-channel", serial).as_ref(),
-            Some(format!("<body><agentAddr>{}</agentAddr></body>", agent).as_ref()),
+            Some(&relay_body),
             &mut cseq,
         )
         .await;
