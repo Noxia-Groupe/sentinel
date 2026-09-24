@@ -78,7 +78,16 @@ async fn main() {
         _ => None,
     };
 
-    let (socket, session) = p2p_handshake(socket, serial, args.relay, credentials).await;
+    // Mode relais : activable en ligne de commande ou via DAHUA_P2P_RELAY.
+    // Nécessaire pour les équipements derrière un NAT qui bloque la connexion
+    // directe (l'échange direct ne s'établit alors jamais).
+    let relay_mode = args.relay
+        || matches!(
+            std::env::var("DAHUA_P2P_RELAY").ok().as_deref(),
+            Some("1") | Some("true")
+        );
+
+    let (socket, session) = p2p_handshake(socket, serial, relay_mode, credentials).await;
 
     let (dh_tx, dh_rx) = mpsc::channel::<PTCPEvent>(128);
     let session = Arc::new(Mutex::new(session));

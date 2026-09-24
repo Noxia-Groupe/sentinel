@@ -236,6 +236,12 @@ device, dérive la clé et signe l'ouverture du canal. C'est un patch local à
 `dh-p2p` (voir `vendor/dh-p2p/VENDOR.md`), dont la cryptographie est validée par
 vecteurs de test. Sans identifiants, le canal reste ouvert en clair comme avant.
 
+Après authentification, le tunnel tente par défaut une **connexion directe** à
+l'équipement. Derrière un NAT qui la bloque (le handshake reste alors muet à la
+phase relais, symptôme `Relay agent timeout`), activer le **mode relais** —
+`DAHUA_P2P_RELAY=1` — qui fait transiter le trafic par le serveur relais Dahua :
+plus lent mais robuste, et suffisant pour la maintenance (requêtes courtes).
+
 Avec `DAHUA_P2P_HELPER` **vidé**, un NVR P2P reste déclarable et continue de
 remonter ses alarmes par webhook ; l'interface indique alors que les tests et
 les interventions demandent l'activation de l'accès P2P (motif `unsupported`).

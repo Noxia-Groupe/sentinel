@@ -39,6 +39,9 @@ services:
       # utilitaire — une valeur VIDE désactiverait le P2P, donc on met le défaut
       # embarqué comme repli d'interpolation plutôt qu'une chaîne vide.
       DAHUA_P2P_HELPER: ${DAHUA_P2P_HELPER:-/usr/local/bin/dh-p2p --port {host}:{port}:{devicePort} {serial}}
+      # Mode relais P2P (1 = actif) pour les équipements derrière un NAT qui
+      # bloque la connexion directe. Laisser vide pour la connexion directe.
+      DAHUA_P2P_RELAY: ${DAHUA_P2P_RELAY:-}
     networks:
       - nginx-proxy
 
