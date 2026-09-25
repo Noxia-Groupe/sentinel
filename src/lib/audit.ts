@@ -5,7 +5,7 @@ export type AuditEntry = {
   actor: Actor;
   /** Verbe normalisé : `nvr.test`, `credential.reveal`, `event.acknowledge`… */
   action: string;
-  targetType?: "nvr" | "event" | "credential" | "client" | "apikey" | "access" | "system";
+  targetType?: "nvr" | "event" | "credential" | "client" | "apikey" | "access" | "webhook" | "system";
   targetId?: string;
   success?: boolean;
   metadata?: Record<string, unknown>;

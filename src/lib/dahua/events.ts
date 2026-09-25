@@ -186,3 +186,77 @@ export function isEventStatus(value: unknown): value is EventStatus {
 export function isSeverity(value: unknown): value is EventSeverity {
   return typeof value === "string" && (SEVERITIES as string[]).includes(value);
 }
+
+/**
+ * Familles d'événements, pour filtrer ce qui part vers un webhook sortant
+ * (« toutes les pannes de stockage », « intrusions seulement »…).
+ */
+export type EventCategory = "intrusion" | "video" | "io" | "storage" | "system" | "other";
+
+export const EVENT_CATEGORIES: EventCategory[] = [
+  "intrusion",
+  "video",
+  "io",
+  "storage",
+  "system",
+  "other",
+];
+
+export const CATEGORY_LABELS: Record<EventCategory, string> = {
+  intrusion: "Intrusion et analyse d'image",
+  video: "Vidéo (perte, masquage, anomalie)",
+  io: "Entrées / sorties d'alarme",
+  storage: "Stockage (disques, enregistrement)",
+  system: "Réseau et système (pannes, alimentation, température)",
+  other: "Autres événements",
+};
+
+const CATEGORY_BY_TYPE: Record<string, EventCategory> = {
+  crosslinedetection: "intrusion",
+  crossregiondetection: "intrusion",
+  leftdetection: "intrusion",
+  takenawaydetection: "intrusion",
+  parkingdetection: "intrusion",
+  loiteringdetection: "intrusion",
+  wanderdetection: "intrusion",
+  smartmotionhuman: "intrusion",
+  smartmotionvehicle: "intrusion",
+  facedetection: "intrusion",
+  facerecognition: "intrusion",
+  numberstat: "intrusion",
+  videomotion: "video",
+  videoloss: "video",
+  videoblind: "video",
+  videoabnormaldetection: "video",
+  videounfocus: "video",
+  scenechange: "video",
+  alarmlocal: "io",
+  alarmoutput: "io",
+  alarmbell: "io",
+  externalalarm: "io",
+  storagenotexist: "storage",
+  storagefailure: "storage",
+  storagelowspace: "storage",
+  diskfull: "storage",
+  hddfull: "storage",
+  nodisk: "storage",
+  recordfailure: "storage",
+  netabort: "system",
+  ipconflict: "system",
+  loginfailure: "system",
+  reboot: "system",
+  shutdown: "system",
+  poweroff: "system",
+  fanspeedalarm: "system",
+  temperaturealarm: "system",
+  firewarning: "system",
+  safetyabnormal: "system",
+};
+
+export function eventCategory(type: string): EventCategory {
+  return CATEGORY_BY_TYPE[type.toLowerCase()] ?? "other";
+}
+
+export function isEventCategory(value: unknown): value is EventCategory {
+  return typeof value === "string" && (EVENT_CATEGORIES as string[]).includes(value);
+}

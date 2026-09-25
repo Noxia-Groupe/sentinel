@@ -307,3 +307,47 @@ model AuditLog {
   @@index([actorType, actorId])
   @@index([targetType, targetId])
 }
+
+// Webhooks sortants : Sentinel pousse les alarmes et pannes choisies vers un
+// service externe (typiquement un agent Hermes). Chaque envoi est signé
+// (HMAC-SHA256) avec un secret propre au webhook, chiffré en base.
+model WebhookEndpoint {
+  id              String   @id @default(cuid())
+  name            String
+  url             String
+  secretEncrypted String
+  enabled         Boolean  @default(true)
+
+  // Filtres — un tableau vide signifie « tout ».
+  severities  String[] // "critical" | "major" | "minor" | "info"
+  categories  String[] // intrusion | video | io | storage | system | other
+  clientIds   String[]
+  // Types d'événements envoyés en plus des nouvelles alarmes.
+  notifyStatusChanges Boolean @default(false) // alarm.status_changed
+  notifyNvrStatus     Boolean @default(true) // nvr.offline / nvr.online
+
+  createdBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  deliveries WebhookDelivery[]
+}
+
+model WebhookDelivery {
+  id         String          @id @default(cuid())
+  endpointId String
+  endpoint   WebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  eventType  String // alarm.created, alarm.status_changed, nvr.offline, nvr.online, sentinel.test
+  payload    Json
+  // "pending" | "success" | "failed"
+  status        String    @default("pending")
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime  @default(now())
+  lastStatus    Int?
+  lastError     String?
+  deliveredAt   DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([status, nextAttemptAt])
+  @@index([endpointId, createdAt])
+}

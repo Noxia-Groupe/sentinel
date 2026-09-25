@@ -2,6 +2,7 @@ import type { Nvr, NvrCredential } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { decrypt } from "@/lib/crypto";
 import { recordAudit } from "@/lib/audit";
+import { emitNvrStatus } from "@/lib/outbound-webhooks";
 import type { Actor } from "@/lib/actor";
 import { DahuaError, type DahuaFailureReason, type DahuaTarget } from "./http";
 import { isP2pAvailable, openTunnel } from "./p2p";
@@ -237,6 +238,10 @@ async function persistCheck(input: {
 }): Promise<void> {
   const { nvr, credential, result, device, rights, actor } = input;
 
+  // Un test réussi vaut preuve de vie ; un échec réseau bascule le NVR hors
+  // ligne, mais un simple refus d'identifiants ne le fait pas.
+  const status = result.ok ? "online" : result.reason === "unreachable" ? "offline" : nvr.status;
+
   try {
     await prisma.$transaction([
       prisma.connectionCheck.create({
@@ -259,13 +264,7 @@ async function persistCheck(input: {
           lastCheckAt: new Date(),
           lastCheckOk: result.ok,
           lastCheckMessage: result.message,
-          // Un test réussi vaut preuve de vie ; un échec réseau bascule le NVR
-          // hors ligne, mais un simple refus d'identifiants ne le fait pas.
-          status: result.ok
-            ? "online"
-            : result.reason === "unreachable"
-              ? "offline"
-              : nvr.status,
+          status,
           ...(result.ok ? { lastSeen: new Date() } : {}),
           ...(result.ok && device
             ? {
@@ -290,6 +289,12 @@ async function persistCheck(input: {
     ]);
   } catch (error) {
     console.error("[dahua] Échec d'enregistrement du test de connexion", error);
+    return;
+  }
+
+  // Passage hors ligne / retour en ligne : relayé aux webhooks sortants.
+  if (status !== nvr.status && (status === "offline" || status === "online")) {
+    void emitNvrStatus(nvr.id, status, status === "offline" ? result.message : undefined);
   }
 }
 
