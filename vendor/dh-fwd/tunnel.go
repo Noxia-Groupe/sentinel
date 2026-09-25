@@ -2340,12 +2340,49 @@ func decodeInfoJSON(plain []byte) (map[string]string, error) {
 func probeDeviceInfo(u *UDP, serial string) []byte {
 	u.Request(fmt.Sprintf("/probe/device/%s", serial), "", true, true)
 	u.Request(fmt.Sprintf("/info/device/%s", serial), "", true, false)
-	data, err := u.Recv(65536, RELAY_READ_TIMEOUT)
-	if err != nil {
-		return nil
+
+	// SENTINEL vendor patch — read past interleaved replies.
+	//
+	// Upstream reads exactly ONE datagram after /info/device. The device's
+	// P2P server may still deliver a late /probe/device answer or a
+	// provisional reply first; that packet carries no Info blob and the
+	// DMSS AutoSalt then fails with "Info field absent" even if the blob
+	// arrives right after. Keep reading for a short grace window and return
+	// the first reply that carries Info, falling back to the first reply
+	// received (upstream behavior) when none does.
+	var first []byte
+	deadline := time.Now().Add(RELAY_READ_TIMEOUT)
+	for i := 0; i < infoProbeMaxPackets; i++ {
+		wait := time.Until(deadline)
+		if first != nil && wait > infoProbeGrace {
+			wait = infoProbeGrace
+		}
+		if wait <= 0 {
+			break
+		}
+		data, err := u.Recv(65536, wait)
+		if err != nil {
+			break
+		}
+		// Recv aliases the socket buffer: copy before the next read.
+		pkt := append([]byte(nil), data...)
+		if fields, err := infoFields(strings.TrimSpace(string(pkt))); err == nil && fields["Info"] != "" {
+			return pkt
+		}
+		if first == nil {
+			first = pkt
+		}
 	}
-	return data
+	return first
 }
+
+// Grace window and packet cap for the /info/device read (SENTINEL patch):
+// once a first reply is in, extra datagrams are awaited only briefly, so a
+// device that genuinely publishes no Info blob costs ~1.5 s, not 15 s.
+var (
+	infoProbeGrace      = 1500 * time.Millisecond
+	infoProbeMaxPackets = 6
+)
 
 // resolveAutoSalt recovers the Type-1 RandSalt from a raw /info/device
 // payload (profile.autoSalt — DMSS: the salt ships inside the encrypted
@@ -2378,7 +2415,9 @@ func resolveAutoSalt(prof *appProfile, dtype int, randsalt string, payload []byt
 	salt, err := randsaltFromInfo(payload)
 	if err != nil {
 		if required {
-			return "", fmt.Errorf("randsalt: %v", err)
+			// SENTINEL vendor patch: still fail-closed, but say what the
+			// device actually answered (status + field names, no values).
+			return "", fmt.Errorf("randsalt: %v (reply %s)", err, describeInfoReply(payload))
 		}
 		logf("%s profile: randsalt from the Info blob unavailable (%v) — continuing", prof.name, err)
 		return randsalt, nil
@@ -2415,6 +2454,27 @@ func randsaltFromInfo(payload []byte) (string, error) {
 		return "", fmt.Errorf("randsalt absent from the Info blob")
 	}
 	return inner.RandSalt, nil
+}
+
+// describeInfoReply summarizes an /info/device reply for diagnostics
+// (SENTINEL patch): status line and field NAMES only — never values.
+func describeInfoReply(payload []byte) string {
+	text := strings.TrimSpace(string(payload))
+	status := "json"
+	if !strings.HasPrefix(text, "{") {
+		res := ParseDHResponse(text)
+		status = fmt.Sprintf("%d %s", res.Code, res.Status)
+	}
+	fields, err := infoFields(text)
+	if err != nil {
+		return fmt.Sprintf("[%s, unparsable: %v]", status, err)
+	}
+	names := make([]string, 0, len(fields))
+	for k := range fields {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	return fmt.Sprintf("[%s, fields: %s]", status, strings.Join(names, ","))
 }
 
 // queryDeviceInfo fetches /info/device/<SN> from the device's P2P server and
