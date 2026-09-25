@@ -59,6 +59,10 @@ export function ApiKeysManager() {
 
   useEffect(() => {
     void load();
+    // Une clé créée ailleurs (section Hermes Agent) doit apparaître ici aussi.
+    const refresh = () => void load();
+    window.addEventListener("sentinel:api-keys-changed", refresh);
+    return () => window.removeEventListener("sentinel:api-keys-changed", refresh);
   }, []);
 
   const create = async () => {

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { normalizeEvent } from "@/lib/dahua/events";
+import { emitAlarmCreated, emitNvrStatus } from "@/lib/outbound-webhooks";
 
 /**
  * Réception des événements Alarm Center.
@@ -48,6 +49,9 @@ async function handle(req: NextRequest, { params }: { params: Promise<{ token: s
     where: { id: nvr.id },
     data: { status: "online", lastSeen: new Date() },
   });
+  if (nvr.status === "offline") {
+    void emitNvrStatus(nvr.id, "online");
+  }
 
   if (HEARTBEAT_TYPES.has(normalized.type.toLowerCase())) {
     return NextResponse.json({ success: true, stored: false, reason: "heartbeat" });
@@ -90,6 +94,9 @@ async function handle(req: NextRequest, { params }: { params: Promise<{ token: s
     },
     select: { id: true, severity: true, title: true },
   });
+
+  // Relais vers les webhooks sortants (agent Hermes…), sans retarder la réponse.
+  void emitAlarmCreated(event.id);
 
   return NextResponse.json({ success: true, stored: true, event });
 }

@@ -49,6 +49,7 @@ import {
 import { toast } from "sonner";
 import { SeverityBadge, StatusBadge } from "@/components/alarm-badges";
 import { ActionResult } from "./action-result";
+import { SupervisionPanel } from "./supervision-panel";
 
 type Rights = {
   available: boolean;
@@ -383,6 +384,7 @@ export default function NvrDetailPage() {
             ["info", "Informations"],
             ["credentials", "Accès"],
             ["actions", "Interventions"],
+            ["supervision", "Supervision"],
             ["events", "Alarmes"],
             ["webhook", "Webhook"],
           ].map(([value, label]) => (
@@ -670,6 +672,11 @@ export default function NvrDetailPage() {
         {/* Interventions */}
         <TabsContent value="actions">
           <ActionsPanel nvrId={nvrId} disabled={unreachable} credentials={nvr.credentials} />
+        </TabsContent>
+
+        {/* Supervision permanente */}
+        <TabsContent value="supervision">
+          <SupervisionPanel nvrId={nvrId} onChange={fetchNvr} />
         </TabsContent>
 
         {/* Alarmes */}

@@ -378,6 +378,128 @@ un résultat d'exploitation, pas une erreur d'API. Seuls les problèmes d'appel
 Le catalogue exact est renvoyé par `GET /api/v1/nvrs/{id}/actions` et décrit dans
 la spécification OpenAPI.
 
+## Supervision permanente
+
+En plus de recevoir les alarmes que poussent les enregistreurs, Sentinel les
+**vérifie lui-même à intervalle régulier** — c'est ce qui détecte la panne d'un
+NVR qui, par définition, ne prévient plus.
+
+À chaque tournée (toutes les 5 min par défaut), pour chaque enregistreur
+surveillé :
+
+| Contrôle | Alarme ouverte | Criticité |
+| --- | --- | --- |
+| Joignabilité (IP ou tunnel P2P) | Enregistreur injoignable — après N échecs consécutifs (2 par défaut) | critique |
+| Compte enregistré accepté | Identifiants refusés par l'enregistreur | majeure |
+| Disques (absent, en erreur, partition en erreur) | Défaut de stockage | critique |
+| Horloge (écart avec l'heure de Paris) | Horloge décalée — au-delà de 5 min par défaut | mineure |
+
+- **Chaque vérification est historisée** (30 jours) : onglet *Supervision* de
+  chaque enregistreur, avec taux de disponibilité sur 24 h et 7 jours, frise des
+  dernières vérifications et bouton *Vérifier maintenant*.
+- Une anomalie qui apparaît ouvre **une** alarme de supervision dans le centre
+  d'alarme (pas de doublon tant qu'elle persiste), relayée aux webhooks sortants
+  comme toute alarme ; quand elle disparaît, l'alarme est **clôturée
+  automatiquement** (« Rétabli — constaté par la supervision automatique »).
+- Les passages hors ligne / en ligne déclenchent aussi `nvr.offline` /
+  `nvr.online` vers les webhooks.
+- Un enregistreur sans compte enregistré, ou à la configuration incomplète, est
+  noté « non vérifié » : pas d'alarme, et il n'entre pas dans le taux de
+  disponibilité.
+- Réglages dans *Paramètres → Supervision permanente* (superadmin) :
+  activation, intervalle, seuil d'injoignabilité, dérive d'horloge tolérée,
+  tournée immédiate, liste des enregistreurs en anomalie. Un enregistreur peut
+  être exclu de la supervision depuis son onglet.
+- API : `GET/POST /api/v1/nvrs/{id}/health` ; outils MCP `get_nvr_health` et
+  `run_health_check`.
+
+## Hermes Agent (MCP et webhooks sortants)
+
+Sentinel se relie à un [agent Hermes](https://hermes-agent.nousresearch.com/docs/)
+dans les deux sens. Tout se configure dans *Paramètres → Hermes Agent*
+(superadmin).
+
+### Hermes → Sentinel : serveur MCP
+
+Sentinel expose un serveur **MCP** (Model Context Protocol, transport
+« Streamable HTTP ») sur `/api/mcp`, authentifié par une clé d'API :
+
+```yaml
+# ~/.hermes/config.yaml
+mcp_servers:
+  sentinel:
+    url: "https://sentinel.noxia-groupe.fr/api/mcp"
+    headers:
+      Authorization: "Bearer sntl_…"
+    timeout: 120
+```
+
+Le bouton *Générer la clé de connexion Hermes* crée la clé et affiche ce bloc
+prêt à coller. Outils disponibles, **filtrés selon les scopes de la clé** :
+
+| Outil | Scope | Rôle |
+| --- | --- | --- |
+| `sentinel_overview` | `alarms:read` | Alarmes en cours, NVR en ligne / hors ligne |
+| `list_alarms`, `get_alarm` | `alarms:read` | Flux d'alarmes filtrable, détail et main courante |
+| `update_alarm` | `alarms:write` | Prise en compte, clôture, entrée de main courante |
+| `list_clients`, `list_nvrs`, `get_nvr` | `nvr:read` | Inventaire et derniers tests |
+| `test_nvr` | `nvr:test` | Test d'accès réel (IP ou P2P) et droits du compte |
+| `get_nvr_health` | `nvr:read` | Supervision : anomalies ouvertes, disponibilité, historique |
+| `run_health_check` | `nvr:test` | Vérification de supervision immédiate |
+| `nvr_action` | `nvr:test` / `nvr:control` | Interventions (capture renvoyée en image, disques, heure, relais, redémarrage…) |
+
+Sans le scope `nvr:control` (case *Autoriser les interventions*), Hermes
+observe, teste et traite les alarmes mais ne modifie aucun équipement. La
+lecture des mots de passe n'est **jamais** exposée par MCP. Chaque appel passe
+par les mêmes contrôles et le même journal d'audit que l'API `/api/v1`, au nom
+de la clé.
+
+### Sentinel → Hermes : webhooks sortants
+
+Sentinel pousse vers une ou plusieurs URL les événements choisis :
+
+| `event_type` | Déclencheur |
+| --- | --- |
+| `alarm.created` | Nouvelle alarme reçue d'un enregistreur, ou ouverte par la supervision |
+| `alarm.status_changed` | Prise en compte / clôture (option) |
+| `nvr.offline` / `nvr.online` | Enregistreur injoignable / rétabli (option) |
+| `sentinel.test` | Bouton *Tester* |
+
+Filtres par webhook : **criticité**, **famille** (intrusion, vidéo, entrées /
+sorties, stockage, réseau et système) et **client** — rien de coché = tout.
+Chaque corps JSON porte `event_type`, un `summary` lisible et les blocs
+`alarm`, `nvr`, `client`.
+
+Format **Hermes « generic »** : `X-Webhook-Timestamp` +
+`X-Webhook-Signature-V2` (HMAC-SHA256 hexadécimal de `<timestamp>.<corps>`,
+anti-rejeu ±300 s), `X-Webhook-Signature` (V1) et `X-Request-ID` stable entre
+les tentatives (dédoublonnage côté Hermes). Le secret `whsec_…` est chiffré en
+base et affiché une seule fois, avec la route Hermes prête à coller :
+
+```yaml
+platforms:
+  webhook:
+    enabled: true
+    extra:
+      routes:
+        sentinel:
+          secret: "whsec_…"
+          events: ["alarm.created", "nvr.offline", "nvr.online", "sentinel.test"]
+          prompt: |
+            Événement Sentinel : {summary}
+            Données complètes : {__raw__}
+          deliver: "telegram"
+```
+
+URL à déclarer dans Sentinel : `http://<serveur-hermes>:8644/webhooks/sentinel`.
+
+Livraison : premier envoi immédiat, puis nouvelles tentatives à 30 s, 2 min,
+10 min, 30 min et 2 h en cas d'erreur réseau ou de réponse 5xx / 408 / 429.
+Une réponse 4xx (signature refusée, route inconnue) arrête les essais. Les 30
+dernières livraisons sont visibles dans les paramètres, avec renvoi manuel.
+Les adresses de lien local (`169.254.0.0/16`, métadonnées cloud) sont refusées,
+y compris après résolution DNS au moment de l'envoi.
+
 ## Sécurité
 
 - Les mots de passe des NVR sont chiffrés en **AES-256-GCM** avec
@@ -388,6 +510,8 @@ la spécification OpenAPI.
   quoi, quand et depuis quelle IP.
 - `credentials:read` et `nvr:control` ne devraient être accordés qu'aux
   intégrations qui en ont réellement besoin.
+- Le serveur MCP n'expose jamais les mots de passe ; les webhooks sortants
+  sont signés (HMAC-SHA256) avec un secret chiffré en base.
 - L'accès à l'interface est limité à une liste d'adresses gérée par le
   superadmin (autoriser, bannir, rôle) — voir *Accès et rôles*.
 - Sentinel se connecte aux adresses IP déclarées dans l'inventaire : ces

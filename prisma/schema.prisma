@@ -135,13 +135,21 @@ model Nvr {
   lastCheckOk      Boolean?
   lastCheckMessage String?
 
+  // Supervision permanente (src/lib/supervision.ts)
+  monitored           Boolean   @default(true)
+  // Pannes actuellement ouvertes, par type d'alarme de supervision
+  healthIssues        String[]  @default([])
+  consecutiveFailures Int       @default(0)
+  lastHealthCheckAt   DateTime?
+
   webhookToken String   @unique @default(cuid())
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  credentials NvrCredential[]
-  events      NvrEvent[]
-  checks      ConnectionCheck[]
+  credentials  NvrCredential[]
+  events       NvrEvent[]
+  checks       ConnectionCheck[]
+  healthChecks HealthCheck[]
 
   @@index([clientId])
   @@index([status])
@@ -306,4 +314,83 @@ model AuditLog {
   @@index([createdAt])
   @@index([actorType, actorId])
   @@index([targetType, targetId])
+}
+
+// Webhooks sortants : Sentinel pousse les alarmes et pannes choisies vers un
+// service externe (typiquement un agent Hermes). Chaque envoi est signé
+// (HMAC-SHA256) avec un secret propre au webhook, chiffré en base.
+model WebhookEndpoint {
+  id              String   @id @default(cuid())
+  name            String
+  url             String
+  secretEncrypted String
+  enabled         Boolean  @default(true)
+
+  // Filtres — un tableau vide signifie « tout ».
+  severities  String[] // "critical" | "major" | "minor" | "info"
+  categories  String[] // intrusion | video | io | storage | system | other
+  clientIds   String[]
+  // Types d'événements envoyés en plus des nouvelles alarmes.
+  notifyStatusChanges Boolean @default(false) // alarm.status_changed
+  notifyNvrStatus     Boolean @default(true) // nvr.offline / nvr.online
+
+  createdBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  deliveries WebhookDelivery[]
+}
+
+model WebhookDelivery {
+  id         String          @id @default(cuid())
+  endpointId String
+  endpoint   WebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  eventType  String // alarm.created, alarm.status_changed, nvr.offline, nvr.online, sentinel.test
+  payload    Json
+  // "pending" | "success" | "failed"
+  status        String    @default("pending")
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime  @default(now())
+  lastStatus    Int?
+  lastError     String?
+  deliveredAt   DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([status, nextAttemptAt])
+  @@index([endpointId, createdAt])
+}
+
+// Historique de la supervision permanente : une ligne par vérification.
+model HealthCheck {
+  id        String  @id @default(cuid())
+  nvrId     String
+  nvr       Nvr     @relation(fields: [nvrId], references: [id], onDelete: Cascade)
+  // Joignable ET compte accepté
+  ok        Boolean
+  reachable Boolean
+  latencyMs Int?
+  // Anomalies constatées lors de cette vérification (types d'alarme de supervision)
+  issues    String[]
+  message   String?
+  // Disques relevés, dérive d'horloge, modèle… (diagnostic)
+  details   Json?
+  createdAt DateTime @default(now())
+
+  @@index([nvrId, createdAt])
+  @@index([createdAt])
+}
+
+// Réglages de la supervision (ligne unique « default »).
+model SupervisionConfig {
+  id                String    @id @default("default")
+  enabled           Boolean   @default(true)
+  intervalMinutes   Int       @default(5)
+  // Échecs consécutifs avant de déclarer un enregistreur injoignable
+  offlineThreshold  Int       @default(2)
+  // Dérive d'horloge tolérée (minutes) ; 0 = contrôle désactivé
+  clockDriftMinutes Int       @default(5)
+  lastRunAt         DateTime?
+  lastRunDurationMs Int?
+  lastRunChecked    Int?
+  updatedAt         DateTime  @updatedAt
 }

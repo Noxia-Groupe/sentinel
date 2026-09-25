@@ -1,4 +1,5 @@
 import type { Prisma } from "@/generated/prisma/client";
+import { emitAlarmStatusChanged } from "./outbound-webhooks";
 import { prisma } from "./prisma";
 import { recordAudit } from "./audit";
 import type { Actor } from "./actor";
@@ -212,6 +213,10 @@ export async function updateEvent(id: string, update: EventUpdate, actor: Actor)
 
   if (update.comment) {
     await addComment(id, update.comment, actor);
+  }
+
+  if (update.status && update.status !== existing.status) {
+    void emitAlarmStatusChanged(id, existing.status, actor.label);
   }
 
   await recordAudit({
