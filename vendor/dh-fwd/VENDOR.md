@@ -64,10 +64,24 @@ Toutes les modifications sont signalées par un commentaire
    interactif : la confirmation `y/n` du chemin relais est alors sautée
    automatiquement (aucun opérateur pour y répondre).
 
+3. **`tunnel.go` — lecture de `/info/device` au-delà des réponses
+   intercalées.**
+   En amont, un seul datagramme est lu après `/info/device`. Si le serveur P2P
+   de l'équipement livre d'abord une réponse tardive à `/probe/device` ou une
+   réponse provisoire, ce paquet ne porte pas de blob `Info` et le profil
+   `dmss` échoue par `autosalt: randsalt: Info field absent` alors que le blob
+   arrive juste après (symptôme observé sur le `DHI-NVR5208-8P-EI`). On lit
+   désormais pendant une courte fenêtre (1,5 s après la première réponse,
+   6 paquets au plus) et on retient la première réponse qui porte `Info`.
+   L'échec reste **fermé** si aucun blob n'arrive (pas de signature avec un sel
+   vide), mais le message d'erreur décrit la réponse reçue — ligne de statut
+   et **noms** de champs, jamais leurs valeurs — pour diagnostiquer.
+   Tests : `sentinel_patch_test.go`.
+
 ## Reconstruire / mettre à jour
 
 Le binaire est compilé dans l'image (étape `dh-fwd-builder` du `Dockerfile`)
 avec les dépendances figées sous `vendor/` (`go build -mod=vendor`). Pour
 mettre à jour depuis l'amont : re-cloner le dépôt au commit voulu, ré-appliquer
-les deux patches ci-dessus, relancer `go mod vendor`, puis
+les patches ci-dessus, relancer `go mod vendor`, puis
 `go build -mod=vendor .` et `go test -mod=vendor ./...`.
