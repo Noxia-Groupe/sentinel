@@ -2,11 +2,7 @@ import NextAuth from "next-auth";
 import MicrosoftEntraID from "next-auth/providers/microsoft-entra-id";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import { prisma } from "./prisma";
-
-const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || "")
-  .split(",")
-  .map((e) => e.trim().toLowerCase())
-  .filter(Boolean);
+import { recordLoginAttempt, resolveAccess } from "./access";
 
 // Entra ID publie son issuer SANS slash final
 // (ex: https://login.microsoftonline.com/<tenant>/v2.0). oauth4webapi compare la
@@ -14,14 +10,8 @@ const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || "")
 // un slash final fait échouer la connexion. On normalise donc ici.
 const issuer = process.env.AUTH_MICROSOFT_ENTRA_ID_ISSUER?.trim().replace(/\/+$/, "");
 
-async function promoteAdmin(email?: string | null) {
-  if (!email || !ADMIN_EMAILS.includes(email.toLowerCase())) return;
-  // updateMany : ne lève pas si l'utilisateur n'existe pas encore.
-  await prisma.user.updateMany({
-    where: { email },
-    data: { role: "admin" },
-  });
-}
+/** Page affichée à un compte Microsoft valide mais non autorisé sur la plateforme. */
+export const ACCESS_DENIED_PATH = "/auth/denied";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter: PrismaAdapter(prisma),
@@ -36,28 +26,24 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     signIn: "/auth/signin",
     error: "/auth/error",
   },
-  events: {
-    // Déclenché APRÈS la création/récupération de l'utilisateur en base, à la
-    // différence du callback `signIn` qui s'exécute avant : c'est le seul
-    // endroit où l'on peut écrire sur l'utilisateur dès la première connexion.
-    async signIn({ user }) {
-      try {
-        await promoteAdmin(user.email);
-      } catch (error) {
-        // Ne jamais faire échouer une connexion valide sur l'attribution du rôle.
-        console.error("[auth] Échec de l'attribution du rôle admin", error);
-      }
-    },
-  },
   callbacks: {
+    // S'exécute AVANT la création de l'utilisateur en base : une adresse hors
+    // liste (ou bannie) n'obtient ni compte ni session.
+    async signIn({ user, profile }) {
+      const email = user.email ?? (typeof profile?.email === "string" ? profile.email : null);
+      const decision = await resolveAccess(email);
+      await recordLoginAttempt(email, user.name, decision);
+      return decision.allowed ? true : ACCESS_DENIED_PATH;
+    },
+
+    // Réévalué à chaque requête : un bannissement ou un changement de rôle
+    // s'applique sans attendre l'expiration de la session.
     async session({ session, user }) {
       if (session.user) {
         session.user.id = user.id;
-        const dbUser = await prisma.user.findUnique({
-          where: { id: user.id },
-          select: { role: true },
-        });
-        session.user.role = dbUser?.role ?? "user";
+        const decision = await resolveAccess(session.user.email);
+        session.user.role = decision.allowed ? decision.role : "user";
+        session.user.denied = !decision.allowed;
       }
       return session;
     },

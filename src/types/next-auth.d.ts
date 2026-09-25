@@ -4,8 +4,10 @@ declare module "next-auth" {
   interface Session {
     user: {
       id: string;
-      /** "admin" | "user" — alimenté depuis la table User */
+      /** "superadmin" | "user" — calculé à chaque requête (src/lib/access.ts) */
       role: string;
+      /** Vrai si l'adresse a perdu l'accès (bannie, retirée de la liste). */
+      denied?: boolean;
     } & DefaultSession["user"];
   }
 }

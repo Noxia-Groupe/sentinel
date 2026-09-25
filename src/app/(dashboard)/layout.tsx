@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import Image from "next/image";
 import { redirect } from "next/navigation";
 import {
   Bell,
@@ -21,10 +20,11 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { auth, signOut } from "@/lib/auth";
+import { ACCESS_DENIED_PATH, auth, signOut } from "@/lib/auth";
+import { OrizonLabCredit, SentinelLogo } from "@/components/brand/sentinel-logo";
 
 export const metadata: Metadata = {
-  title: "SENTINEL — Centre de contrôle",
+  title: "Sentinel — Centre de contrôle",
   description: "Centre de contrôle des enregistreurs Dahua",
 };
 
@@ -33,8 +33,10 @@ const navigation = [
   { name: "Centre d'alarme", href: "/alarms", icon: Bell },
   { name: "Enregistreurs", href: "/nvrs", icon: Server },
   { name: "Clients", href: "/clients", icon: Building2 },
-  { name: "Paramètres", href: "/settings", icon: Settings },
 ];
+
+/** Paramètres : liste d'accès, clés d'API, audit — réservés au superadmin. */
+const superadminNavigation = [{ name: "Paramètres", href: "/settings", icon: Settings }];
 
 export default async function DashboardLayout({
   children,
@@ -46,6 +48,13 @@ export default async function DashboardLayout({
   if (!session?.user) {
     redirect("/auth/signin");
   }
+  // Accès retiré alors que la session était ouverte (banni, retiré de la liste).
+  if (session.user.denied) {
+    redirect(ACCESS_DENIED_PATH);
+  }
+
+  const links =
+    session.user.role === "superadmin" ? [...navigation, ...superadminNavigation] : navigation;
 
   return (
     <TooltipProvider>
@@ -53,28 +62,13 @@ export default async function DashboardLayout({
         {/* Sidebar Desktop */}
         <aside className="hidden lg:fixed lg:inset-y-0 lg:flex lg:w-64 lg:flex-col border-r border-[#132255] bg-[#080d24]/80 backdrop-blur-xl">
           {/* Logo */}
-          <div className="flex items-center gap-3 px-5 py-4 border-b border-[#132255]">
-            <div className="relative w-32 h-7">
-              <Image
-                src="/brand/logos/NOXIA GROUPE BLANC.jpg"
-                alt="Noxia Groupe"
-                fill
-                className="object-contain object-left"
-              />
-            </div>
-          </div>
-
-          {/* Titre SENTINEL */}
-          <div className="px-5 py-3">
-            <p className="text-[10px] font-semibold tracking-[0.2em] text-[#0251a1] uppercase">
-              Sentinel
-            </p>
-            <p className="text-xs text-[#8896b4]">Centre de contrôle NVR</p>
+          <div className="px-5 py-4 border-b border-[#132255]">
+            <SentinelLogo subtitle="Centre de contrôle NVR" />
           </div>
 
           {/* Navigation */}
           <nav className="flex-1 space-y-1 px-3 py-2">
-            {navigation.map((item) => {
+            {links.map((item) => {
               const Icon = item.icon;
               return (
                 <Link
@@ -129,6 +123,7 @@ export default async function DashboardLayout({
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+            <OrizonLabCredit className="mt-3 text-center" />
           </div>
         </aside>
 
@@ -139,21 +134,11 @@ export default async function DashboardLayout({
               <Menu className="h-5 w-5" />
             </SheetTrigger>
             <SheetContent side="left" className="w-64 bg-[#080d24] border-[#132255] p-0">
-              <div className="flex items-center gap-3 px-4 py-4 border-b border-[#132255]">
-                <div className="relative w-28 h-5">
-                  <Image
-                    src="/brand/logos/NOXIA GROUPE BLANC.jpg"
-                    alt="Noxia Groupe"
-                    fill
-                    className="object-contain object-left"
-                  />
-                </div>
-              </div>
-              <div className="px-4 pt-3 pb-1">
-                <p className="text-[10px] font-semibold tracking-[0.2em] text-[#0251a1] uppercase">Sentinel</p>
+              <div className="px-4 py-4 border-b border-[#132255]">
+                <SentinelLogo subtitle="Centre de contrôle NVR" />
               </div>
               <nav className="space-y-1 p-3">
-                {navigation.map((item) => {
+                {links.map((item) => {
                   const Icon = item.icon;
                   return (
                     <Link
@@ -167,9 +152,10 @@ export default async function DashboardLayout({
                   );
                 })}
               </nav>
+              <OrizonLabCredit className="px-4 pb-4" />
             </SheetContent>
           </Sheet>
-          <span className="font-bold text-sm tracking-wider text-[#dde1e4]">SENTINEL</span>
+          <SentinelLogo markClassName="h-7 w-7" />
         </div>
 
         {/* Main Content */}

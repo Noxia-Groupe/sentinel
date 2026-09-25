@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/session";
+import { requireSuperadmin } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { recordAudit } from "@/lib/audit";
 import { isScope } from "@/lib/api-keys";
@@ -8,7 +8,7 @@ type Params = { params: Promise<{ id: string }> };
 
 // PATCH /api/api-keys/[id] — Modifie les scopes ou réactive une clé
 export async function PATCH(req: NextRequest, { params }: Params) {
-  const guard = await requireAdmin(req);
+  const guard = await requireSuperadmin(req);
   if (!guard.ok) return guard.response;
 
   const { id } = await params;
@@ -42,7 +42,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 //
 // La ligne est conservée : le journal d'audit doit rester lisible après coup.
 export async function DELETE(req: NextRequest, { params }: Params) {
-  const guard = await requireAdmin(req);
+  const guard = await requireSuperadmin(req);
   if (!guard.ok) return guard.response;
 
   const { id } = await params;

@@ -10,8 +10,8 @@ const montserrat = Montserrat({
 });
 
 export const metadata: Metadata = {
-  title: "SENTINEL — Centre de contrôle NVR",
-  description: "Centre opérationnel de gestion des enregistreurs Dahua — Noxia Groupe",
+  title: "Sentinel — Centre de contrôle NVR",
+  description: "Centre de contrôle et d'alarme des enregistreurs Dahua",
 };
 
 export default function RootLayout({

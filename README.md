@@ -1,8 +1,8 @@
-# SENTINEL
+# Sentinel
 
 Centre d'alarme des enregistreurs Dahua exploités pour nos clients.
 
-SENTINEL reçoit les événements Alarm Center des NVR du parc, permet de les
+Sentinel reçoit les événements Alarm Center des NVR du parc, permet de les
 **traiter depuis la plateforme** (prise en compte, main courante, clôture),
 stocke les identifiants d'accès de façon chiffrée et sait s'en servir pour
 **tester une connexion, vérifier les droits d'un compte et intervenir à
@@ -11,6 +11,8 @@ destinée aux intégrations et aux agents IA.
 
 Stack : Next.js 16 (App Router) · Prisma 7 / PostgreSQL · NextAuth v5 ·
 Tailwind 4 · Docker.
+
+Développé par OrizonLab.
 
 ## Ce que fait la plateforme
 
@@ -30,6 +32,9 @@ Tailwind 4 · Docker.
 L'accès à l'interface se fait exclusivement par **SSO Microsoft Entra ID**. Il
 n'y a pas de mot de passe local. L'API `/api/v1` utilise des clés, pas la
 session.
+
+**Un compte Microsoft valide ne suffit pas** : l'adresse doit aussi figurer dans
+la liste d'accès de la plateforme (voir [§ 3](#3-accès-et-rôles)).
 
 ### 1. Inscrire l'application dans Entra ID
 
@@ -70,12 +75,37 @@ n'importe quel compte Microsoft peut se connecter.
 `AUTH_TRUST_HOST=true` est nécessaire derrière le reverse proxy (Nginx Proxy
 Manager) pour que NextAuth fasse confiance aux en-têtes `X-Forwarded-*`.
 
-### 3. Superadmins
+### 3. Accès et rôles
 
-Les adresses listées dans `ADMIN_EMAILS` (séparées par des virgules) reçoivent
-le rôle `admin` à chaque connexion, y compris la toute première. Le rôle est
-exposé sur `session.user.role` et visible dans *Paramètres*. Les superadmins
-sont les seuls à pouvoir créer des clés d'API et lire le journal d'audit.
+L'accès est accordé **adresse par adresse**, depuis *Paramètres → Accès à la
+plateforme* :
+
+| Statut | Effet |
+| --- | --- |
+| **Autorisé** | Accès à la plateforme, avec le rôle choisi |
+| **Banni** | Aucun accès ; les sessions ouvertes sont coupées immédiatement |
+| **Demande d'accès** | Compte Microsoft qui a tenté de se connecter sans être dans la liste : aucun accès, mais le superadmin peut l'autoriser ou le bannir en un clic |
+| *(absent de la liste)* | Aucun accès |
+
+Une adresse refusée arrive sur une page « Accès non autorisé » qui invite à se
+rapprocher de son responsable systèmes (même message quel que soit le motif).
+
+| Rôle | Droits |
+| --- | --- |
+| **Utilisateur** | Tout voir et tout faire (alarmes, enregistreurs, clients, interventions), **sauf les paramètres** |
+| **Superadmin** | Tout, y compris les paramètres : liste d'accès, clés d'API, journal d'audit |
+
+Les adresses de `ADMIN_EMAILS` (séparées par des virgules) sont **superadmins
+d'office** : c'est l'amorçage de la plateforme, elles ne sont ni modifiables ni
+bannissables depuis l'interface. Un superadmin ne peut pas non plus se bannir,
+se rétrograder ou se retirer lui-même. L'accès et le rôle sont réévalués à
+chaque requête : un changement s'applique sans attendre l'expiration de la
+session. Toutes les modifications sont tracées dans le journal d'audit.
+
+> La liste d'accès repose sur l'adresse e-mail transmise par Entra ID.
+> Renseigner `AUTH_MICROSOFT_ENTRA_ID_ISSUER` avec le **tenant ID** de
+> l'organisation (plutôt que `common`) garantit que ces adresses sont gérées
+> par l'annuaire de l'entreprise.
 
 ## Centralisation des alarmes
 
@@ -358,7 +388,9 @@ la spécification OpenAPI.
   quoi, quand et depuis quelle IP.
 - `credentials:read` et `nvr:control` ne devraient être accordés qu'aux
   intégrations qui en ont réellement besoin.
-- SENTINEL se connecte aux adresses IP déclarées dans l'inventaire : ces
+- L'accès à l'interface est limité à une liste d'adresses gérée par le
+  superadmin (autoriser, bannir, rôle) — voir *Accès et rôles*.
+- Sentinel se connecte aux adresses IP déclarées dans l'inventaire : ces
   équipements étant sur des réseaux privés ou des VPN, l'ajout d'un
   enregistreur reste une opération réservée aux utilisateurs authentifiés.
 
