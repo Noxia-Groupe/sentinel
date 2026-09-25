@@ -230,10 +230,11 @@ session cloud.
 
 **Profil applicatif.** Dahua utilise des serveurs cloud distincts selon
 l'application d'enrôlement. `DAHUA_P2P_PROFILE` sélectionne le dialecte :
-`dmss` (défaut, cloud Dolynk — équipement enrôlé via l'application **DMSS**,
-cas des NVR récents) ou `smartpss` (cloud easy4ip — enrôlé via **SmartPSS**).
-Un mauvais profil fait répondre le cloud par un **404** : il suffit alors de
-basculer sur l'autre valeur.
+`smartpss` (défaut, cloud easy4ip — équipement enregistré via **SmartPSS**) ou
+`dmss` (cloud Dolynk — enrôlé via l'application **DMSS**). Un mauvais profil fait
+répondre le cloud par un **404** : SENTINEL bascule alors automatiquement sur
+l'autre profil et retient, pour chaque NVR, celui qui a fonctionné. La variable
+ne fixe donc que le profil essayé en premier.
 
 **Authentification post-2024.** Les firmwares récents exigent un canal
 authentifié : sans le bon dialecte, ils répondent `403 DevPwd_InvalidNonce` /

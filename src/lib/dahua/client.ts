@@ -148,12 +148,34 @@ function hasPrefix(authorities: string[], prefix: string): boolean {
   return authorities.some((a) => a.toLowerCase().startsWith(`${lower}_`));
 }
 
+/**
+ * Les noms d'autorités varient selon les générations de firmware :
+ * `Playback_01` ou `Replay_01` pour la relecture, `UserManage` ou `AuthUserMag`
+ * pour la gestion des comptes, etc. On accepte les deux familles.
+ */
 export function summarizeRights(user: DeviceUser): RightsSummary {
   const authorities = user.authorities;
   const isAdmin = (user.group ?? "").toLowerCase() === "admin";
 
-  const configure = isAdmin || has(authorities, "System", "AVCfg", "Network", "Storage", "Event");
-  const userManagement = isAdmin || has(authorities, "UserManage", "System_Account");
+  const configure =
+    isAdmin ||
+    has(
+      authorities,
+      "System",
+      "AVCfg",
+      "Network",
+      "Storage",
+      "Event",
+      "AuthSysCfg",
+      "AuthStoreCfg",
+      "AuthEventCfg",
+      "AuthNetCfg",
+    );
+  const userManagement = isAdmin || has(authorities, "UserManage", "System_Account", "AuthUserMag");
+
+  const playbackChannels = [
+    ...new Set([...channelsFor(authorities, "Playback"), ...channelsFor(authorities, "Replay")]),
+  ].sort((a, b) => a - b);
 
   return {
     available: true,
@@ -164,17 +186,24 @@ export function summarizeRights(user: DeviceUser): RightsSummary {
     authorities,
     capabilities: {
       liveView: isAdmin || hasPrefix(authorities, "Monitor") || has(authorities, "Monitor"),
-      playback: isAdmin || hasPrefix(authorities, "Playback") || has(authorities, "Playback"),
-      ptz: isAdmin || hasPrefix(authorities, "PTZ") || has(authorities, "PTZ"),
-      record: isAdmin || hasPrefix(authorities, "Record") || has(authorities, "Record"),
-      backup: isAdmin || has(authorities, "Backup"),
+      playback:
+        isAdmin ||
+        hasPrefix(authorities, "Playback") ||
+        hasPrefix(authorities, "Replay") ||
+        has(authorities, "Playback", "Replay"),
+      ptz: isAdmin || hasPrefix(authorities, "PTZ") || has(authorities, "PTZ", "AuthPTZ"),
+      record:
+        isAdmin ||
+        hasPrefix(authorities, "Record") ||
+        has(authorities, "Record", "AuthManuCtr"),
+      backup: isAdmin || has(authorities, "Backup", "AuthBackup"),
       configure,
       userManagement,
-      reboot: isAdmin || has(authorities, "ShutDown", "System"),
+      reboot: isAdmin || has(authorities, "ShutDown", "System", "AuthMaintence", "AuthMaintenance"),
     },
     channels: {
       liveView: channelsFor(authorities, "Monitor"),
-      playback: channelsFor(authorities, "Playback"),
+      playback: playbackChannels,
       ptz: channelsFor(authorities, "PTZ"),
     },
   };
@@ -254,35 +283,72 @@ export async function getChannelTitles(target: DahuaTarget): Promise<Record<numb
 
 export type StorageDevice = {
   name: string;
+  /** État brut remonté par le firmware (`Success`, `Error`, `Nonexist`…). */
   state?: string;
+  /** Faux si le disque est en erreur ou si une de ses partitions l'est. */
+  healthy: boolean;
   totalBytes?: number;
   usedBytes?: number;
+  partitions: number;
 };
+
+function isObject(value: DahuaValue | undefined): value is DahuaObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function objects(value: DahuaValue | undefined): DahuaObject[] {
+  return Array.isArray(value) ? value.filter(isObject) : [];
+}
+
+/**
+ * Les firmwares expriment les capacités en octets (`TotalBytes=1000204886016.00`),
+ * certains anciens en Mo. Aucun disque d'enregistreur ne fait moins de 100 Mo :
+ * une valeur plus petite ne peut être que des Mo.
+ */
+function toBytes(value: DahuaValue | undefined): number | undefined {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return undefined;
+  return n >= 1e8 ? n : n * 1024 * 1024;
+}
 
 /** État des disques — un disque plein ou absent est une cause d'alarme fréquente. */
 export async function getStorage(target: DahuaTarget): Promise<StorageDevice[]> {
-  const parsed = await get(target, "/cgi-bin/storageDevice.cgi?action=getDeviceAllInfo");
-  const list = parsed.list;
-  if (!Array.isArray(list)) return [];
+  return parseStorage(await get(target, "/cgi-bin/storageDevice.cgi?action=getDeviceAllInfo"));
+}
 
-  return list
-    .filter((entry): entry is DahuaObject => typeof entry === "object" && !Array.isArray(entry))
-    .map((entry) => {
-      const detail = Array.isArray(entry.Detail) ? entry.Detail[0] : undefined;
-      const detailObj =
-        typeof detail === "object" && detail !== null && !Array.isArray(detail)
-          ? (detail as DahuaObject)
-          : undefined;
-      // Les tailles sont exprimées en Mo par le firmware.
-      const totalMb = Number(detailObj?.TotalBytes ?? entry.TotalBytes ?? NaN);
-      const usedMb = Number(detailObj?.UsedBytes ?? entry.UsedBytes ?? NaN);
-      return {
-        name: String(entry.Name ?? detailObj?.Path ?? "disque"),
-        state: entry.State !== undefined ? String(entry.State) : undefined,
-        totalBytes: Number.isFinite(totalMb) ? totalMb * 1024 * 1024 : undefined,
-        usedBytes: Number.isFinite(usedMb) ? usedMb * 1024 * 1024 : undefined,
-      };
-    });
+/** Interprète la réponse de `storageDevice.cgi?action=getDeviceAllInfo`. */
+export function parseStorage(parsed: DahuaObject): StorageDevice[] {
+  // Réponse usuelle : `list.info[0].Name=/dev/sda`, `list.info[0].Detail[0].TotalBytes=…`
+  // — `list` est donc un objet portant le tableau `info`. Certains firmwares
+  // renvoient directement `list[0]…` ou `info[0]…`.
+  const entries = Array.isArray(parsed.list)
+    ? objects(parsed.list)
+    : isObject(parsed.list)
+      ? objects(parsed.list.info)
+      : objects(parsed.info);
+
+  return entries.map((entry) => {
+    const details = objects(entry.Detail);
+    const sum = (key: "TotalBytes" | "UsedBytes"): number | undefined => {
+      const values = (details.length ? details.map((d) => d[key]) : [entry[key]])
+        .map(toBytes)
+        .filter((n): n is number => n !== undefined);
+      return values.length ? values.reduce((a, b) => a + b, 0) : undefined;
+    };
+
+    const state = entry.State !== undefined ? String(entry.State) : undefined;
+    const partitionError = details.some((d) => d.IsError === true);
+    const stateOk = state === undefined || /^(success|normal|ok)$/i.test(state);
+
+    return {
+      name: String(entry.Name ?? details[0]?.Path ?? "disque"),
+      state,
+      healthy: stateOk && !partitionError,
+      totalBytes: sum("TotalBytes"),
+      usedBytes: sum("UsedBytes"),
+      partitions: details.length,
+    };
+  });
 }
 
 /** Canaux actuellement en alarme pour un code donné (VideoMotion, VideoLoss…). */
@@ -302,11 +368,41 @@ export async function reboot(target: DahuaTarget): Promise<void> {
 }
 
 /** Remet l'équipement à l'heure (dérive d'horloge = horodatages d'alarme faux). */
+/**
+ * Fuseau horaire des enregistreurs du parc. Un NVR attend son heure LOCALE
+ * (heure murale) : on la calcule explicitement dans ce fuseau, changements
+ * d'heure été/hiver compris, sans dépendre du fuseau du serveur (souvent UTC
+ * dans un conteneur — d'où un décalage de 1 à 2 h auparavant).
+ */
+export const DEVICE_TIME_ZONE = process.env.DAHUA_TIME_ZONE?.trim() || "Europe/Paris";
+
+/** Heure murale `AAAA-MM-JJ HH:MM:SS` de `date` dans le fuseau donné. */
+export function formatDeviceTime(date: Date, timeZone = DEVICE_TIME_ZONE): string {
+  let parts: Intl.DateTimeFormatPart[];
+  try {
+    parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(date);
+  } catch {
+    throw new DahuaError("invalid", `Fuseau horaire inconnu : ${timeZone} (DAHUA_TIME_ZONE)`);
+  }
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((p) => p.type === type)?.value ?? "00";
+  return (
+    `${part("year")}-${part("month")}-${part("day")} ` +
+    `${part("hour")}:${part("minute")}:${part("second")}`
+  );
+}
+
 export async function setDeviceTime(target: DahuaTarget, date = new Date()): Promise<string> {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const formatted =
-    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
-    `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  const formatted = formatDeviceTime(date);
   await dahuaRequestText(
     target,
     `/cgi-bin/global.cgi?action=setCurrentTime&time=${encodeURIComponent(formatted)}`,

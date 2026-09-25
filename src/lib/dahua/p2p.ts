@@ -124,6 +124,56 @@ type Tunnel = {
 const tunnels = new Map<string, Tunnel>();
 
 /**
+ * Profils applicatifs de `dh-fwd` : chaque cloud Dahua ne connaît que les
+ * équipements enrôlés par son application — SmartPSS (easy4ip) ou DMSS
+ * (Dolynk). Interroger le mauvais cloud se solde par un 404.
+ */
+const P2P_PROFILES = ["smartpss", "dmss"] as const;
+
+/** Profil qui a réussi pour chaque numéro de série, pour ne pas re-tâtonner. */
+const workingProfile = new Map<string, string>();
+
+/**
+ * Ordre d'essai des profils : celui qui a déjà marché pour ce NVR, sinon
+ * `DAHUA_P2P_PROFILE` (défaut `smartpss`), puis l'autre en repli.
+ */
+function profileOrder(serial: string): string[] {
+  const configured = process.env.DAHUA_P2P_PROFILE?.trim().toLowerCase() || "smartpss";
+  const first = workingProfile.get(serial) ?? configured;
+  const known = (P2P_PROFILES as readonly string[]).includes(first);
+  return known ? [first, ...P2P_PROFILES.filter((p) => p !== first)] : [first];
+}
+
+/** Échec typique d'un équipement interrogé sur le mauvais cloud. */
+function isWrongCloud(error: unknown): boolean {
+  return (
+    error instanceof DahuaError &&
+    /404 Not Found|not found on p2psrv|doesn't exist/i.test(error.message)
+  );
+}
+
+/** Établit le tunnel en essayant l'autre profil si le cloud répond 404. */
+async function establishWithProfiles(options: {
+  serial: string;
+  devicePort: number;
+  username: string;
+  password: string;
+}): Promise<TunnelHandle> {
+  let lastError: unknown;
+  for (const profile of profileOrder(options.serial)) {
+    try {
+      const handle = await establishTunnel(options, profile);
+      workingProfile.set(options.serial, profile);
+      return handle;
+    } catch (error) {
+      lastError = error;
+      if (!isWrongCloud(error)) throw error;
+    }
+  }
+  throw lastError;
+}
+
+/**
  * Découpe une commande en arguments, en respectant les guillemets.
  * On ne passe jamais par un shell : les valeurs substituées (numéro de série,
  * identifiants) ne peuvent donc pas injecter d'arguments supplémentaires.
@@ -268,7 +318,7 @@ export async function openTunnel(options: {
   let lastError: unknown;
   for (let attempt = 1; attempt <= CONNECT_ATTEMPTS; attempt++) {
     try {
-      return await establishTunnel(options);
+      return await establishWithProfiles(options);
     } catch (error) {
       lastError = error;
       const reason = error instanceof DahuaError ? error.reason : undefined;
@@ -282,12 +332,15 @@ export async function openTunnel(options: {
 }
 
 /** Une tentative unique : lance l'utilitaire et attend l'établissement du tunnel. */
-async function establishTunnel(options: {
-  serial: string;
-  devicePort: number;
-  username: string;
-  password: string;
-}): Promise<TunnelHandle> {
+async function establishTunnel(
+  options: {
+    serial: string;
+    devicePort: number;
+    username: string;
+    password: string;
+  },
+  profile: string,
+): Promise<TunnelHandle> {
   const port = await allocatePort();
   const values = {
     serial: options.serial,
@@ -309,11 +362,8 @@ async function establishTunnel(options: {
       DAHUA_P2P_PASSWORD: options.password,
       DAHUA_P2P_LOCAL_PORT: String(port),
       DAHUA_P2P_DEVICE_PORT: String(options.devicePort),
-      // Profil applicatif dh-fwd : `dmss` par défaut (équipements enrôlés via
-      // l'application DMSS, cas des NVR postérieurs à 2024). Passer à
-      // `smartpss` si le cloud renvoie un 404 (équipement enregistré côté
-      // SmartPSS). Une valeur déjà fixée dans l'environnement l'emporte.
-      DAHUA_P2P_PROFILE: process.env.DAHUA_P2P_PROFILE?.trim() || "dmss",
+      // Profil applicatif dh-fwd de cette tentative (voir profileOrder).
+      DAHUA_P2P_PROFILE: profile,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });

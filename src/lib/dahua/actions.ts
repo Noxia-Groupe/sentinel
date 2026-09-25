@@ -2,6 +2,7 @@ import type { Actor } from "@/lib/actor";
 import type { DahuaFailureReason, DahuaTarget } from "./http";
 import { runNvrAction, type NvrWithCredentials } from "./service";
 import {
+  DEVICE_TIME_ZONE,
   getAlarmOutState,
   getChannelTitles,
   getDeviceInfo,
@@ -102,7 +103,9 @@ export const NVR_ACTIONS: Record<NvrActionName, NvrActionDefinition> = {
   },
   "sync-time": {
     label: "Mise à l'heure",
-    description: "Aligne l'horloge de l'enregistreur sur celle du serveur",
+    description:
+      "Aligne l'horloge de l'enregistreur sur l'heure légale de son fuseau " +
+      "(Europe/Paris par défaut, heure d'été/hiver comprise — DAHUA_TIME_ZONE)",
     kind: "control",
     scope: "nvr:control",
   },
@@ -202,7 +205,7 @@ export async function executeNvrAction(options: {
 
       case "sync-time": {
         const applied = await setDeviceTime(target);
-        return { time: applied };
+        return { time: applied, timeZone: DEVICE_TIME_ZONE };
       }
 
       case "alarm-out": {

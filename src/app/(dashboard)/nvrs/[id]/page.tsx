@@ -48,6 +48,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { SeverityBadge, StatusBadge } from "@/components/alarm-badges";
+import { ActionResult } from "./action-result";
 
 type Rights = {
   available: boolean;
@@ -1035,12 +1036,12 @@ function ActionsPanel({
       {output && output.action !== "snapshot" && (
         <Card className="border-[#132255] bg-[#0a1130]/60">
           <CardHeader>
-            <CardTitle className="text-base text-[#dde1e4]">Résultat — {output.action}</CardTitle>
+            <CardTitle className="text-base text-[#dde1e4]">
+              {buttons.find((button) => button.action === output.action)?.label ?? output.action}
+            </CardTitle>
           </CardHeader>
           <CardContent>
-            <pre className="max-h-96 overflow-auto rounded-lg bg-[#080d24] border border-[#132255] p-3 text-[11px] text-[#8896b4]">
-              {JSON.stringify(output.data, null, 2)}
-            </pre>
+            <ActionResult action={output.action} data={output.data} />
           </CardContent>
         </Card>
       )}
