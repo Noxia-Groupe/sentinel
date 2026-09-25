@@ -34,9 +34,10 @@ du corps était pourtant correcte.
   obtient `200 Server Nat Info!` ; le profil `dmss` évite aussi l'étape de
   *relay-channel* qui provoquait chez nous le « Relay agent timeout ».
 
-Le choix du profil se fait par `DAHUA_P2P_PROFILE` (défaut `dmss`, adapté aux
-équipements enrôlés via l'application DMSS ; passer à `smartpss` si le cloud
-renvoie un 404 — signe que l'équipement est enregistré côté SmartPSS).
+SENTINEL essaie d'abord le profil `DAHUA_P2P_PROFILE` (défaut `smartpss`, le
+cloud où est enregistré le `DHI-NVR5208-8P-EI` du parc), puis bascule sur
+l'autre si le cloud répond 404 — signe que l'équipement est enregistré de
+l'autre côté (voir `src/lib/dahua/p2p.ts`).
 
 ## Modifications locales (patches SENTINEL)
 

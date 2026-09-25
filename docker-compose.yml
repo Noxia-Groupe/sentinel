@@ -31,6 +31,11 @@ services:
       AUTH_MICROSOFT_ENTRA_ID_SECRET: ${AUTH_MICROSOFT_ENTRA_ID_SECRET}
       AUTH_MICROSOFT_ENTRA_ID_ISSUER: ${AUTH_MICROSOFT_ENTRA_ID_ISSUER}
       AUTH_TRUST_HOST: "true"
+      # Heure de Paris (été/hiver automatique) pour les journaux et l'affichage
+      # côté serveur. Les dates restent stockées en UTC en base.
+      TZ: ${TZ:-Europe/Paris}
+      # Fuseau des enregistreurs : heure écrite par « Mettre à l'heure ».
+      DAHUA_TIME_ZONE: ${DAHUA_TIME_ZONE:-Europe/Paris}
       ADMIN_EMAILS: ${ADMIN_EMAILS}
       # Adresse déclarée aux NVR comme centre d'alarme (défaut : NEXTAUTH_URL).
       ALARM_CENTER_URL: ${ALARM_CENTER_URL:-}
@@ -39,10 +44,10 @@ services:
       # utilitaire — une valeur VIDE désactiverait le P2P, donc on met le défaut
       # embarqué comme repli d'interpolation plutôt qu'une chaîne vide.
       DAHUA_P2P_HELPER: ${DAHUA_P2P_HELPER:-/usr/local/bin/dh-fwd {serial} -p {port}:{devicePort}}
-      # Profil applicatif : `dmss` (défaut) pour les équipements enrôlés via
-      # l'application DMSS — cas des NVR postérieurs à 2024. Passer à `smartpss`
-      # si le cloud renvoie un 404 (équipement enregistré côté SmartPSS).
-      DAHUA_P2P_PROFILE: ${DAHUA_P2P_PROFILE:-dmss}
+      # Profil applicatif essayé en premier : `smartpss` (cloud easy4ip) ou
+      # `dmss` (cloud Dolynk). Si le cloud répond 404 (mauvais cloud), SENTINEL
+      # bascule seul sur l'autre profil et retient celui qui marche par NVR.
+      DAHUA_P2P_PROFILE: ${DAHUA_P2P_PROFILE:-smartpss}
       # Mode relais P2P (1 = actif) pour les équipements derrière un NAT qui
       # bloque la connexion directe. Laisser vide pour la connexion directe.
       DAHUA_P2P_RELAY: ${DAHUA_P2P_RELAY:-}
