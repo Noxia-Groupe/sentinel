@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/session";
+import { requireSuperadmin } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 
 // GET /api/audit — Journal d'audit (réservé aux superadmins)
 export async function GET(req: NextRequest) {
-  const guard = await requireAdmin(req);
+  const guard = await requireSuperadmin(req);
   if (!guard.ok) return guard.response;
 
   const url = new URL(req.url);

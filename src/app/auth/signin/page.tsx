@@ -1,9 +1,10 @@
-import Image from "next/image";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { SignInButton } from "./signin-button";
+import { OrizonLabCredit, SentinelMark } from "@/components/brand/sentinel-logo";
 
 const ERROR_MESSAGES: Record<string, string> = {
-  AccessDenied: "Accès refusé. Votre compte Microsoft n'est pas autorisé.",
+  AccessDenied:
+    "Votre compte n'a pas le droit d'accéder à cette plateforme. Rapprochez-vous de votre responsable systèmes.",
   Configuration: "Configuration du fournisseur d'identité invalide.",
   OAuthAccountNotLinked: "Cette adresse e-mail est déjà associée à un autre mode de connexion.",
 };
@@ -25,19 +26,10 @@ export default async function SignIn({
 
       <Card className="relative w-full max-w-md border-[#132255] bg-[#0a1130]/80 backdrop-blur-xl shadow-2xl shadow-[#0251a1]/10">
         <CardHeader className="text-center space-y-6 pb-4">
-          {/* Logo Noxia Groupe */}
-          <div className="mx-auto w-48 h-12 relative">
-            <Image
-              src="/brand/logos/NOXIA GROUPE BLANC.jpg"
-              alt="Noxia Groupe"
-              fill
-              className="object-contain"
-              priority
-            />
-          </div>
+          <SentinelMark className="mx-auto h-16 w-16" />
           <div className="space-y-2">
             <CardTitle className="text-3xl font-extrabold tracking-wider text-[#dde1e4]">
-              SENTINEL
+              Sentinel
             </CardTitle>
             <CardDescription className="text-[#8896b4] text-sm">
               Centre opérationnel de vidéosurveillance
@@ -52,14 +44,12 @@ export default async function SignIn({
           )}
           <SignInButton callbackUrl={callbackUrl ?? "/"} />
           <p className="text-center text-xs text-[#8896b4]">
-            Connexion réservée aux membres Noxia Groupe
+            Connexion réservée aux comptes autorisés
           </p>
         </CardContent>
       </Card>
 
-      <p className="mt-8 text-xs text-[#8896b4]/50">
-        © Noxia Groupe — Tous droits réservés
-      </p>
+      <OrizonLabCredit className="mt-8" />
     </div>
   );
 }

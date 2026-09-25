@@ -8,7 +8,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   Configuration:
     "La configuration du fournisseur d'identité est incorrecte. Vérifiez les variables AUTH_MICROSOFT_ENTRA_ID_ID, AUTH_MICROSOFT_ENTRA_ID_SECRET et AUTH_MICROSOFT_ENTRA_ID_ISSUER, ainsi que NEXTAUTH_SECRET.",
   AccessDenied:
-    "Accès refusé. Votre compte Microsoft n'est pas autorisé à accéder à SENTINEL.",
+    "Votre compte n'a pas le droit d'accéder à cette plateforme. Rapprochez-vous de votre responsable systèmes.",
   Verification: "Le lien de connexion est invalide ou a expiré.",
   OAuthCallbackError:
     "Microsoft a rejeté la requête de connexion. Vérifiez que l'URI de redirection déclarée dans Entra ID correspond exactement à /api/auth/callback/microsoft-entra-id.",

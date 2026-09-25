@@ -83,7 +83,7 @@
   --sidebar-ring: oklch(0.708 0 0);
 }
 
-/* Noxia Group Dark Theme — bleu nuit profond */
+/* Thème sombre Sentinel — bleu nuit profond */
 .dark {
   --background: #000726;
   --foreground: #dde1e4;
@@ -131,7 +131,7 @@
   }
 }
 
-/* Scrollbar Noxia */
+/* Scrollbar Sentinel */
 ::-webkit-scrollbar {
   width: 6px;
 }

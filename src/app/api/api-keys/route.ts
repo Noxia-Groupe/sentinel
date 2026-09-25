@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/session";
+import { requireSuperadmin } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { recordAudit } from "@/lib/audit";
 import { ALL_SCOPES, DEFAULT_SCOPES, SCOPES, generateApiKey, isScope } from "@/lib/api-keys";
 
 // GET /api/api-keys — Liste des clés (jamais le secret) et catalogue des scopes
 export async function GET(req: NextRequest) {
-  const guard = await requireAdmin(req);
+  const guard = await requireSuperadmin(req);
   if (!guard.ok) return guard.response;
 
   const keys = await prisma.apiKey.findMany({
@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
 
 // POST /api/api-keys — Crée une clé ; le secret n'est renvoyé qu'ici, une fois
 export async function POST(req: NextRequest) {
-  const guard = await requireAdmin(req);
+  const guard = await requireSuperadmin(req);
   if (!guard.ok) return guard.response;
 
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;

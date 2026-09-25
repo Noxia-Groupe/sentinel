@@ -7,7 +7,7 @@ import { requestIp, type Actor } from "./actor";
  * correspondant à la session SSO, ou la réponse d'erreur à retourner tel quel.
  */
 export type SessionGuard =
-  | { ok: true; actor: Actor; role: string }
+  | { ok: true; actor: Actor; role: string; email: string }
   | { ok: false; response: NextResponse };
 
 export async function requireUser(req: Request): Promise<SessionGuard> {
@@ -19,9 +19,21 @@ export async function requireUser(req: Request): Promise<SessionGuard> {
     };
   }
 
+  // Session encore ouverte mais accès retiré (banni, retiré de la liste).
+  if (session.user.denied) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: "Accès à la plateforme non autorisé pour ce compte" },
+        { status: 403 },
+      ),
+    };
+  }
+
   return {
     ok: true,
     role: session.user.role ?? "user",
+    email: session.user.email ?? "",
     actor: {
       type: "user",
       id: session.user.id,
@@ -31,15 +43,15 @@ export async function requireUser(req: Request): Promise<SessionGuard> {
   };
 }
 
-/** Réservé aux superadmins (gestion des clés d'API, du journal d'audit…). */
-export async function requireAdmin(req: Request): Promise<SessionGuard> {
+/** Réservé aux superadmins : paramètres, liste d'accès, clés d'API, journal d'audit. */
+export async function requireSuperadmin(req: Request): Promise<SessionGuard> {
   const guard = await requireUser(req);
   if (!guard.ok) return guard;
-  if (guard.role !== "admin") {
+  if (guard.role !== "superadmin") {
     return {
       ok: false,
       response: NextResponse.json(
-        { error: "Action réservée aux administrateurs" },
+        { error: "Action réservée au superadmin" },
         { status: 403 },
       ),
     };
