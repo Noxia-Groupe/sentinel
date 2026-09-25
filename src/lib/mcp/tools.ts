@@ -14,6 +14,8 @@ import {
 } from "@/lib/dahua/events";
 import { isReachable, loadNvr, testNvrConnection } from "@/lib/dahua/service";
 import { executeNvrAction, isNvrAction, NVR_ACTIONS, type NvrActionName } from "@/lib/dahua/actions";
+import { checkNvr, getSupervisionConfig, nvrHealth } from "@/lib/supervision";
+import { supervisionDefinition, type SupervisionIssue } from "@/lib/dahua/events";
 
 /**
  * Outils MCP exposés aux agents (Hermes Agent…).
@@ -136,14 +138,34 @@ export const MCP_TOOLS: McpTool[] = [
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: true },
     run: async () => {
-      const [alarms, total, online, offline, clients] = await Promise.all([
+      const [alarms, total, online, offline, clients, config, faulty] = await Promise.all([
         alarmStats(),
         prisma.nvr.count(),
         prisma.nvr.count({ where: { status: "online" } }),
         prisma.nvr.count({ where: { status: "offline" } }),
         prisma.client.count(),
+        getSupervisionConfig(),
+        prisma.nvr.findMany({
+          where: { monitored: true, NOT: { healthIssues: { isEmpty: true } } },
+          select: { id: true, name: true, healthIssues: true },
+        }),
       ]);
-      return text({ alarms, nvrs: { total, online, offline }, clients, generatedAt: new Date().toISOString() });
+      return text({
+        alarms,
+        nvrs: { total, online, offline },
+        clients,
+        supervision: {
+          enabled: config.enabled,
+          intervalMinutes: config.intervalMinutes,
+          lastRunAt: config.lastRunAt,
+          nvrsWithIssues: faulty.map((nvr) => ({
+            id: nvr.id,
+            name: nvr.name,
+            issues: (nvr.healthIssues as SupervisionIssue[]).map((issue) => supervisionDefinition(issue).title),
+          })),
+        },
+        generatedAt: new Date().toISOString(),
+      });
     },
   },
   {
@@ -348,6 +370,55 @@ export const MCP_TOOLS: McpTool[] = [
         actor,
       });
       return text({ nvr: { id: nvr.id, name: nvr.name }, ...result });
+    },
+  },
+  {
+    name: "get_nvr_health",
+    title: "Supervision d'un enregistreur",
+    description:
+      "Résultat de la supervision permanente : anomalies ouvertes (injoignable, identifiants refusés, stockage, horloge), taux de disponibilité 24 h / 7 j et historique des vérifications automatiques.",
+    scope: "nvr:read",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        limit: { type: "integer", minimum: 1, maximum: 200, default: 20, description: "Vérifications à renvoyer" },
+      },
+      required: ["id"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true },
+    run: async (args) => {
+      const health = await nvrHealth(str(args, "id", true)!, Number(args.limit ?? 20) || 20);
+      return health ? text(health) : failure("Enregistreur introuvable");
+    },
+  },
+  {
+    name: "run_health_check",
+    title: "Vérifier un enregistreur maintenant",
+    description:
+      "Lance immédiatement la vérification de supervision (joignabilité, compte, disques, horloge), l'historise, et ouvre ou clôture les alarmes de supervision en conséquence.",
+    scope: "nvr:test",
+    inputSchema: {
+      type: "object",
+      properties: { id: { type: "string" } },
+      required: ["id"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false },
+    run: async (args, actor) => {
+      const id = str(args, "id", true)!;
+      const result = await checkNvr(id);
+      if (!result) return failure("Enregistreur introuvable");
+      await recordAudit({
+        actor,
+        action: "nvr.health_check",
+        targetType: "nvr",
+        targetId: id,
+        success: result.ok,
+        metadata: { message: result.message, openIssues: result.openIssues },
+      });
+      return text(result);
     },
   },
   {

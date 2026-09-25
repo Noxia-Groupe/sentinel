@@ -76,6 +76,12 @@ const EVENT_CATALOG: Record<string, EventDefinition> = {
   firewarning: { title: "Détection incendie", severity: "critical" },
   safetyabnormal: { title: "Anomalie de sécurité", severity: "major" },
 
+  // Supervision permanente de Sentinel (vérifications périodiques)
+  supervisionunreachable: { title: "Enregistreur injoignable (supervision)", severity: "critical" },
+  supervisionauthfailure: { title: "Identifiants refusés par l'enregistreur (supervision)", severity: "major" },
+  supervisionstoragefault: { title: "Défaut de stockage (supervision)", severity: "critical" },
+  supervisionclockdrift: { title: "Horloge de l'enregistreur décalée (supervision)", severity: "minor" },
+
   // Fonctionnement normal
   newfile: { title: "Nouveau fichier enregistré", severity: "info" },
   intelliframe: { title: "Image d'analyse", severity: "info" },
@@ -251,6 +257,10 @@ const CATEGORY_BY_TYPE: Record<string, EventCategory> = {
   temperaturealarm: "system",
   firewarning: "system",
   safetyabnormal: "system",
+  supervisionunreachable: "system",
+  supervisionauthfailure: "system",
+  supervisionstoragefault: "storage",
+  supervisionclockdrift: "system",
 };
 
 export function eventCategory(type: string): EventCategory {
@@ -259,4 +269,17 @@ export function eventCategory(type: string): EventCategory {
 
 export function isEventCategory(value: unknown): value is EventCategory {
   return typeof value === "string" && (EVENT_CATEGORIES as string[]).includes(value);
+}
+
+/** Types d'alarme émis par la supervision permanente (et non par l'équipement). */
+export const SUPERVISION_ISSUES = [
+  "SupervisionUnreachable",
+  "SupervisionAuthFailure",
+  "SupervisionStorageFault",
+  "SupervisionClockDrift",
+] as const;
+export type SupervisionIssue = (typeof SUPERVISION_ISSUES)[number];
+
+export function supervisionDefinition(issue: SupervisionIssue): { title: string; severity: EventSeverity } {
+  return EVENT_CATALOG[issue.toLowerCase()]!;
 }

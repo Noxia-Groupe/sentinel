@@ -135,13 +135,21 @@ model Nvr {
   lastCheckOk      Boolean?
   lastCheckMessage String?
 
+  // Supervision permanente (src/lib/supervision.ts)
+  monitored           Boolean   @default(true)
+  // Pannes actuellement ouvertes, par type d'alarme de supervision
+  healthIssues        String[]  @default([])
+  consecutiveFailures Int       @default(0)
+  lastHealthCheckAt   DateTime?
+
   webhookToken String   @unique @default(cuid())
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  credentials NvrCredential[]
-  events      NvrEvent[]
-  checks      ConnectionCheck[]
+  credentials  NvrCredential[]
+  events       NvrEvent[]
+  checks       ConnectionCheck[]
+  healthChecks HealthCheck[]
 
   @@index([clientId])
   @@index([status])
@@ -350,4 +358,39 @@ model WebhookDelivery {
 
   @@index([status, nextAttemptAt])
   @@index([endpointId, createdAt])
+}
+
+// Historique de la supervision permanente : une ligne par vérification.
+model HealthCheck {
+  id        String  @id @default(cuid())
+  nvrId     String
+  nvr       Nvr     @relation(fields: [nvrId], references: [id], onDelete: Cascade)
+  // Joignable ET compte accepté
+  ok        Boolean
+  reachable Boolean
+  latencyMs Int?
+  // Anomalies constatées lors de cette vérification (types d'alarme de supervision)
+  issues    String[]
+  message   String?
+  // Disques relevés, dérive d'horloge, modèle… (diagnostic)
+  details   Json?
+  createdAt DateTime @default(now())
+
+  @@index([nvrId, createdAt])
+  @@index([createdAt])
+}
+
+// Réglages de la supervision (ligne unique « default »).
+model SupervisionConfig {
+  id                String    @id @default("default")
+  enabled           Boolean   @default(true)
+  intervalMinutes   Int       @default(5)
+  // Échecs consécutifs avant de déclarer un enregistreur injoignable
+  offlineThreshold  Int       @default(2)
+  // Dérive d'horloge tolérée (minutes) ; 0 = contrôle désactivé
+  clockDriftMinutes Int       @default(5)
+  lastRunAt         DateTime?
+  lastRunDurationMs Int?
+  lastRunChecked    Int?
+  updatedAt         DateTime  @updatedAt
 }

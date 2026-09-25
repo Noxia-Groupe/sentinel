@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { ApiKeysManager } from "./api-keys-manager";
 import { AccessManager } from "./access-manager";
 import { HermesIntegration } from "./hermes-integration";
+import { SupervisionSettings } from "./supervision-settings";
 
 export default async function SettingsPage() {
   const session = await auth();
@@ -35,7 +36,7 @@ export default async function SettingsPage() {
         </p>
         <h1 className="text-2xl font-bold tracking-tight text-[#dde1e4]">Paramètres</h1>
         <p className="text-[#8896b4] mt-1 text-sm">
-          Espace superadmin — accès à la plateforme, agents, accès programmatique et traçabilité
+          Espace superadmin — accès à la plateforme, supervision, agents, accès programmatique et traçabilité
         </p>
       </div>
 
@@ -59,6 +60,8 @@ export default async function SettingsPage() {
       </Card>
 
       <AccessManager currentEmail={session.user.email ?? ""} />
+
+      <SupervisionSettings />
 
       <HermesIntegration />
 
