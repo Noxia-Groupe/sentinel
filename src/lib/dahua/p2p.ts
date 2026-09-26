@@ -109,6 +109,8 @@ export type TunnelHandle = {
 };
 
 type Tunnel = {
+  /** Clé de mutualisation : un tunnel par couple numéro de série + port visé. */
+  key: string;
   serial: string;
   port: number;
   child: ChildProcess;
@@ -122,6 +124,14 @@ type Tunnel = {
 };
 
 const tunnels = new Map<string, Tunnel>();
+
+/**
+ * Un enregistreur peut avoir plusieurs tunnels à la fois (API web sur le port
+ * HTTP, vidéo en direct sur le port RTSP) : la mutualisation se fait par port.
+ */
+function tunnelKey(serial: string, devicePort: number): string {
+  return `${serial}:${devicePort}`;
+}
 
 /**
  * Profils applicatifs de `dh-fwd` : chaque cloud Dahua ne connaît que les
@@ -296,7 +306,7 @@ export async function openTunnel(options: {
     );
   }
 
-  const existing = tunnels.get(options.serial);
+  const existing = tunnels.get(tunnelKey(options.serial, options.devicePort));
   if (existing && existing.child.exitCode === null) {
     existing.refs += 1;
     if (existing.idleTimer) {
@@ -369,6 +379,7 @@ async function establishTunnel(
   });
 
   const tunnel: Tunnel = {
+    key: tunnelKey(options.serial, options.devicePort),
     serial: options.serial,
     port,
     child,
@@ -396,11 +407,11 @@ async function establishTunnel(
     tunnel.output.push(`échec du lancement : ${error.message}`);
   });
   child.once("exit", () => {
-    if (tunnels.get(options.serial) === tunnel) tunnels.delete(options.serial);
+    if (tunnels.get(tunnel.key) === tunnel) tunnels.delete(tunnel.key);
   });
 
   tunnel.ready = waitForReady(port, READY_TIMEOUT_MS, tunnel);
-  tunnels.set(options.serial, tunnel);
+  tunnels.set(tunnel.key, tunnel);
 
   try {
     await tunnel.ready;
@@ -439,7 +450,7 @@ function release(tunnel: Tunnel): void {
 
 function closeTunnel(tunnel: Tunnel): void {
   if (tunnel.idleTimer) clearTimeout(tunnel.idleTimer);
-  if (tunnels.get(tunnel.serial) === tunnel) tunnels.delete(tunnel.serial);
+  if (tunnels.get(tunnel.key) === tunnel) tunnels.delete(tunnel.key);
   if (tunnel.child.exitCode === null) tunnel.child.kill();
 }
 

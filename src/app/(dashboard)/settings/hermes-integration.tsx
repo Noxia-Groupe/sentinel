@@ -2,10 +2,13 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
+  Activity,
   Bot,
   Check,
   Copy,
+  Download,
   KeyRound,
+  Stethoscope,
   Pencil,
   Plus,
   RefreshCw,
@@ -22,6 +25,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { HERMES_SCHEDULE_REQUEST, MCP_PROMPTS, hermesSkill } from "@/lib/mcp/playbooks";
 
 /**
  * Intégration Hermes Agent :
@@ -121,6 +125,13 @@ mcp_servers:
     connect_timeout: 30`;
 }
 
+function mcpTestCommand(origin: string, secret: string): string {
+  return `curl -s ${origin}/api/mcp \\
+  -H "Authorization: Bearer ${secret}" \\
+  -H "Content-Type: application/json" \\
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}'`;
+}
+
 function HermesMcpCard() {
   const origin = useOrigin();
   const [allowControl, setAllowControl] = useState(false);
@@ -175,7 +186,8 @@ function HermesMcpCard() {
         <span className="text-sm text-[#dde1e4]">
           Autoriser les interventions
           <span className="block text-[11px] text-[#8896b4]">
-            Redémarrage, pilotage des relais, mise à l&apos;heure, provisionnement du centre d&apos;alarme (scope{" "}
+            Maintenance curative : ports PoE (relance d&apos;une caméra figée), mise à l&apos;heure, relais,
+            redémarrage, provisionnement du centre d&apos;alarme (scope{" "}
             <span className="font-mono">nvr:control</span>). Sans cette case, Hermes observe, teste et traite les
             alarmes, mais ne modifie pas les équipements.
           </span>
@@ -200,13 +212,176 @@ function HermesMcpCard() {
               </p>
               <CopyBlock label="Configuration à ajouter côté Hermes" value={mcpSnippet(origin, secret)} />
               <p className="text-[11px] text-[#8896b4]">
-                Puis redémarrer Hermes (ou recharger ses serveurs MCP) : les outils <span className="font-mono">sentinel_*</span>,{" "}
-                <span className="font-mono">list_alarms</span>, <span className="font-mono">test_nvr</span>… apparaissent.
+                Puis redémarrer Hermes (ou recharger ses serveurs MCP) : les outils <span className="font-mono">sentinel_overview</span>,{" "}
+                <span className="font-mono">fleet_maintenance</span>, <span className="font-mono">maintenance_report</span>,{" "}
+                <span className="font-mono">nvr_action</span>… apparaissent. La connexion s&apos;affiche ensuite dans
+                « État de la connexion » ci-dessous dès le premier appel.
               </p>
+              <CopyBlock label="Test depuis le serveur Hermes (doit répondre « sentinel »)" value={mcpTestCommand(origin, secret)} />
             </div>
           )}
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// État de la connexion
+// ---------------------------------------------------------------------------
+
+type HermesKey = {
+  id: string;
+  name: string;
+  prefix: string;
+  lastUsedAt: string | null;
+  expired: boolean;
+  /** La clé a servi dans les 15 dernières minutes. */
+  connected: boolean;
+  canIntervene: boolean;
+};
+type HermesActivity = {
+  id: string;
+  action: string;
+  targetType: string | null;
+  success: boolean;
+  createdAt: string;
+};
+
+function formatWhen(value: string | null): string {
+  if (!value) return "jamais";
+  return new Date(value).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
+}
+
+function HermesStatus() {
+  const [data, setData] = useState<{ keys: HermesKey[]; activity: HermesActivity[] } | null>(null);
+
+  const load = useCallback(async () => {
+    const res = await fetch("/api/hermes/status");
+    if (res.ok) setData(await res.json());
+  }, []);
+
+  useEffect(() => {
+    void load();
+    const refresh = () => void load();
+    window.addEventListener("sentinel:api-keys-changed", refresh);
+    return () => window.removeEventListener("sentinel:api-keys-changed", refresh);
+  }, [load]);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-[#dde1e4] flex items-center gap-2">
+          <Activity className="h-4 w-4 text-[#4d9fe8]" />
+          État de la connexion
+        </h3>
+        <button
+          type="button"
+          onClick={() => void load()}
+          className="inline-flex items-center gap-1 text-[11px] text-[#4d9fe8] hover:text-[#dde1e4]"
+        >
+          <RefreshCw className="h-3 w-3" />
+          Actualiser
+        </button>
+      </div>
+      {!data ? (
+        <Skeleton className="h-16 w-full" />
+      ) : data.keys.length === 0 ? (
+        <p className="text-xs text-[#8896b4]">
+          Aucune clé Hermes active : générer la clé de connexion ci-dessus, puis la déclarer côté Hermes.
+        </p>
+      ) : (
+        <ul className="space-y-2">
+          {data.keys.map((key) => (
+            <li
+              key={key.id}
+              className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[#132255] bg-[#080d24] px-3 py-2"
+            >
+              <span className="text-sm text-[#dde1e4]">
+                {key.name} <span className="font-mono text-[11px] text-[#8896b4]">{key.prefix}…</span>
+              </span>
+              <span className="flex items-center gap-2 text-[11px] text-[#8896b4]">
+                {key.expired ? (
+                  <Badge className="bg-red-500/10 text-red-400 border-red-500/25">expirée</Badge>
+                ) : key.connected ? (
+                  <Badge className="bg-green-500/10 text-green-400 border-green-500/25">connecté</Badge>
+                ) : key.lastUsedAt ? (
+                  <Badge className="bg-[#132255] text-[#8896b4] border-[#1a2d66]">inactif</Badge>
+                ) : (
+                  <Badge className="bg-amber-400/10 text-amber-300 border-amber-400/25">jamais connecté</Badge>
+                )}
+                {key.canIntervene ? "interventions autorisées" : "lecture et tests"} · dernier appel{" "}
+                {formatWhen(key.lastUsedAt)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {data && data.activity.length > 0 && (
+        <details>
+          <summary className="cursor-pointer text-xs text-[#8896b4] hover:text-[#dde1e4]">
+            Dernières actions de l&apos;agent ({data.activity.length})
+          </summary>
+          <ul className="mt-2 space-y-1">
+            {data.activity.map((entry) => (
+              <li key={entry.id} className="flex items-center gap-2 text-[11px] text-[#8896b4]">
+                <span className="font-mono">{formatWhen(entry.createdAt)}</span>
+                <span className={entry.success ? "text-[#dde1e4]" : "text-red-400"}>{entry.action}</span>
+                {!entry.success && <span className="text-red-400">(échec)</span>}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Compétence de maintenance
+// ---------------------------------------------------------------------------
+
+function HermesSkill() {
+  const origin = useOrigin();
+  const download = () => {
+    const blob = new Blob([hermesSkill(origin)], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "SKILL.md";
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+  return (
+    <div className="space-y-4">
+      <div className="space-y-1">
+        <h3 className="text-sm font-semibold text-[#dde1e4] flex items-center gap-2">
+          <Stethoscope className="h-4 w-4 text-[#4d9fe8]" />
+          Maintenance préventive et curative
+        </h3>
+        <p className="text-xs text-[#8896b4] leading-relaxed">
+          Hermes dispose des outils <span className="font-mono">fleet_maintenance</span> (parc à risque) et{" "}
+          <span className="font-mono">maintenance_report</span>{" "}(bilan d&apos;un enregistreur, constats classés et
+          action recommandée), ainsi que de deux procédures prêtes à l&apos;emploi :{" "}
+          {MCP_PROMPTS.map((prompt, index) => (
+            <span key={prompt.name}>
+              {index > 0 ? " et " : ""}
+              <span className="font-mono">{prompt.name}</span>
+            </span>
+          ))}
+          . La compétence ci-dessous les lui apprend durablement : la déposer dans{" "}
+          <span className="font-mono">~/.hermes/skills/sentinel-maintenance/SKILL.md</span> sur le serveur Hermes.
+        </p>
+      </div>
+      <Button
+        variant="outline"
+        onClick={download}
+        className="border-[#132255] bg-[#080d24] text-[#dde1e4] hover:bg-[#132255]"
+      >
+        <Download className="h-4 w-4" />
+        Télécharger la compétence Hermes
+      </Button>
+      <CopyBlock label="Pour une tournée préventive automatique, demander à Hermes" value={HERMES_SCHEDULE_REQUEST} />
     </div>
   );
 }
@@ -234,8 +409,9 @@ platforms:
           prompt: |
             Événement Sentinel : {summary}
             Données complètes : {__raw__}
-            Analyse la situation avec les outils MCP Sentinel (vérifier l'enregistreur,
-            capture si utile), puis consigne ton analyse dans la main courante de l'alarme.
+            Applique la procédure de diagnostic curatif de la compétence sentinel-maintenance
+            (outils MCP Sentinel : get_alarm, get_nvr_health, maintenance_report, puis l'action
+            recommandée si elle est sûre), et consigne ton analyse dans la main courante de l'alarme.
           deliver: "telegram"   # où Hermes rend compte : telegram, discord, slack…
 
 # URL à renseigner dans Sentinel : http://<serveur-hermes>:8644/webhooks/sentinel`;
@@ -725,6 +901,9 @@ export function HermesIntegration() {
       </CardHeader>
       <CardContent className="space-y-8">
         <HermesMcpCard />
+        <HermesStatus />
+        <div className="border-t border-[#132255]" />
+        <HermesSkill />
         <div className="border-t border-[#132255]" />
         <OutboundWebhooksManager />
       </CardContent>

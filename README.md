@@ -369,14 +369,59 @@ un résultat d'exploitation, pas une erreur d'API. Seuls les problèmes d'appel
 
 `POST /api/v1/nvrs/{id}/actions` avec `{"action": "...", "params": {...}}` :
 
-- **Lecture** (`nvr:test`) : `device-info`, `users`, `channels`, `storage`,
-  `alarm-out-state`, `alarm-center`, `event-indexes` (`params.code`), `snapshot`
-  (`params.channel`).
-- **Contrôle** (`nvr:control`) : `configure-alarm-center`, `sync-time`,
-  `alarm-out` (`params.index`, `params.active`), `reboot`.
+- **Lecture** (`nvr:test`) : `maintenance-report`, `system-stats`, `cameras`,
+  `poe-status`, `logs` (`params.hours`, `params.limit`), `capabilities`,
+  `advanced-read` (`params.method`, `params.params`), `device-info`, `users`,
+  `channels`, `storage`, `alarm-out-state`, `alarm-center`, `event-indexes`
+  (`params.code`), `snapshot` (`params.channel`).
+- **Contrôle** (`nvr:control`) : `poe-power` (`params.port`, `params.mode`
+  `on`|`off`|`cycle`, `params.offSeconds`, `params.dryRun`),
+  `configure-alarm-center`, `sync-time`, `alarm-out` (`params.index`,
+  `params.active`), `reboot`.
 
 Le catalogue exact est renvoyé par `GET /api/v1/nvrs/{id}/actions` et décrit dans
 la spécification OpenAPI.
+
+## Maintenance à distance
+
+Onglet *Interventions* de chaque enregistreur (et mêmes actions pour les agents) :
+
+- **Bilan de maintenance** : un passage complet — disques, horloge, processeur,
+  mémoire, temps de fonctionnement, liens réseau, caméras, ports PoE, âge du
+  firmware — et des constats classés (*critique*, *à surveiller*, *info*), chacun
+  avec la recommandation et, quand elle existe, un bouton pour l'appliquer
+  (remettre à l'heure, relancer une caméra par son port PoE, lire le journal…).
+- **Charge système** : processeur, mémoire, en marche depuis, interfaces réseau
+  et vitesse de lien (API JSON « RPC2 » de Dahua).
+- **État des caméras** : par voie, titre, en ligne / perte vidéo, adresse et
+  modèle de la caméra, flux principal et secondaire (codec, résolution, images/s,
+  débit maximal configuré) et le débit total configuré.
+- **Ports PoE** : état de chaque port, avec *Redémarrer* (coupure brève puis
+  rétablissement), *Couper* et *Rétablir* ; chaque écriture est relue pour
+  confirmation.
+- **Journal de l'enregistreur** : dernières entrées (redémarrages, connexions…).
+- **Capacités du firmware** : méthodes RPC et sections de configuration
+  réellement exposées par l'équipement.
+
+Les firmwares Dahua diffèrent beaucoup : le débit **réel** par caméra et la
+consommation PoE ne sont affichés que si le firmware les expose — Sentinel les
+découvre alors lui-même (`system.listMethod`) et les affiche tels quels. Le
+diagnostic *Capacités du firmware* montre ce qu'un modèle donné permet.
+
+## Direct vidéo
+
+Onglet *Direct* : **une seule caméra à la fois**, choisie dans la liste des
+voies, en **flux secondaire uniquement** (`subtype=1`) pour ménager la liaison
+du site. Sentinel lit le flux RTSP (directement, ou par un tunnel P2P ouvert sur
+le port RTSP) et le retransmet en MJPEG allégé, affiché sans plugin. Démarrer une
+autre caméra coupe la précédente ; quitter l'onglet coupe le flux ; un direct
+s'arrête de lui-même au bout de `LIVE_MAX_MINUTES` (10 par défaut).
+
+- Port RTSP par enregistreur (554 par défaut), dans *Modifier*.
+- ffmpeg est inclus dans l'image Docker. Réglages : `LIVE_MAX_STREAMS`,
+  `LIVE_MAX_MINUTES`, `LIVE_FPS`, `LIVE_QUALITY`, `FFMPEG_PATH`.
+- Les identifiants RTSP ne passent jamais en ligne de commande : l'URL est
+  écrite dans un fichier temporaire en 0600, lu par ffmpeg puis supprimé.
 
 ## Supervision permanente
 
@@ -446,7 +491,20 @@ prêt à coller. Outils disponibles, **filtrés selon les scopes de la clé** :
 | `test_nvr` | `nvr:test` | Test d'accès réel (IP ou P2P) et droits du compte |
 | `get_nvr_health` | `nvr:read` | Supervision : anomalies ouvertes, disponibilité, historique |
 | `run_health_check` | `nvr:test` | Vérification de supervision immédiate |
-| `nvr_action` | `nvr:test` / `nvr:control` | Interventions (capture renvoyée en image, disques, heure, relais, redémarrage…) |
+| `fleet_maintenance` | `nvr:read` | Parc à risque (anomalies, disponibilité 7 j, jamais vérifiés), sans solliciter les équipements |
+| `maintenance_report` | `nvr:test` | Bilan d'un enregistreur : constats classés et action `nvr_action` recommandée |
+| `nvr_action` | `nvr:test` / `nvr:control` | Interventions (capture renvoyée en image, charge, caméras, PoE, journal, heure, relais, redémarrage…) |
+
+Le serveur publie aussi deux **prompts MCP** : `maintenance_preventive` (tournée
+du parc : bilan, corrections sûres, rapport) et `diagnostic_curatif` (d'une
+alarme ou d'une panne jusqu'à la vérification et la main courante). *Paramètres
+→ Hermes Agent* propose en plus :
+
+- l'**état de la connexion** (clés Hermes, dernier appel, dernières actions de
+  l'agent) ;
+- la **compétence Hermes** `sentinel-maintenance` à télécharger, à déposer dans
+  `~/.hermes/skills/sentinel-maintenance/SKILL.md` ;
+- la phrase à adresser à Hermes pour planifier une tournée préventive hebdomadaire.
 
 Sans le scope `nvr:control` (case *Autoriser les interventions*), Hermes
 observe, teste et traite les alarmes mais ne modifie aucun équipement. La

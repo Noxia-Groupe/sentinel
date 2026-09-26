@@ -88,6 +88,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       ...(body.ip !== undefined ? { ip: asString(body.ip) } : {}),
       ...(body.port !== undefined ? { port: toPort(body.port, 37777) } : {}),
       ...(body.httpPort !== undefined ? { httpPort: toPort(body.httpPort, 80) } : {}),
+      ...(body.rtspPort !== undefined ? { rtspPort: toPort(body.rtspPort, 554) } : {}),
       ...(typeof body.useHttps === "boolean" ? { useHttps: body.useHttps } : {}),
       ...(body.serialNumber !== undefined ? { serialNumber: asString(body.serialNumber) } : {}),
       ...(body.model !== undefined ? { model: asString(body.model) } : {}),

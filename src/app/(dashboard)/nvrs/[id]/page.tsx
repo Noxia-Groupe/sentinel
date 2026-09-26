@@ -23,6 +23,12 @@ import {
   ShieldCheck,
   Users,
   XCircle,
+  Gauge,
+  Video,
+  PlugZap,
+  ScrollText,
+  ListChecks,
+  Stethoscope,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -50,6 +56,7 @@ import { toast } from "sonner";
 import { SeverityBadge, StatusBadge } from "@/components/alarm-badges";
 import { ActionResult } from "./action-result";
 import { SupervisionPanel } from "./supervision-panel";
+import { LivePanel } from "./live-panel";
 
 type Rights = {
   available: boolean;
@@ -99,6 +106,7 @@ type NvrDetail = {
   ip: string | null;
   port: number;
   httpPort: number;
+  rtspPort: number;
   useHttps: boolean;
   serialNumber: string | null;
   model: string | null;
@@ -384,6 +392,7 @@ export default function NvrDetailPage() {
             ["info", "Informations"],
             ["credentials", "Accès"],
             ["actions", "Interventions"],
+            ["live", "Direct"],
             ["supervision", "Supervision"],
             ["events", "Alarmes"],
             ["webhook", "Webhook"],
@@ -414,6 +423,7 @@ export default function NvrDetailPage() {
                     mono
                   />
                   <Info label="Port SDK" value={String(nvr.port)} mono />
+                  <Info label="Port RTSP (direct)" value={String(nvr.rtspPort)} mono />
                   <Info label="N° de série" value={nvr.serialNumber ?? "—"} mono />
                   <Info label="Modèle" value={nvr.model ?? "—"} />
                   <Info label="Firmware" value={nvr.firmware ?? "—"} mono />
@@ -672,6 +682,11 @@ export default function NvrDetailPage() {
         {/* Interventions */}
         <TabsContent value="actions">
           <ActionsPanel nvrId={nvrId} disabled={unreachable} credentials={nvr.credentials} />
+        </TabsContent>
+
+        {/* Direct — une caméra, flux secondaire */}
+        <TabsContent value="live">
+          <LivePanel nvrId={nvrId} disabled={unreachable} />
         </TabsContent>
 
         {/* Supervision permanente */}
@@ -943,11 +958,17 @@ function ActionsPanel({
       : null;
 
   const buttons: { action: string; label: string; icon: React.ReactNode; danger?: boolean }[] = [
+    { action: "maintenance-report", label: "Bilan de maintenance", icon: <Stethoscope className="h-4 w-4" /> },
     { action: "device-info", label: "Informations équipement", icon: <ShieldCheck className="h-4 w-4" /> },
     { action: "users", label: "Comptes de l'enregistreur", icon: <Users className="h-4 w-4" /> },
     { action: "channels", label: "Titres des canaux", icon: <Camera className="h-4 w-4" /> },
     { action: "storage", label: "État des disques", icon: <HardDrive className="h-4 w-4" /> },
     { action: "snapshot", label: "Capture canal 1", icon: <Camera className="h-4 w-4" /> },
+    { action: "system-stats", label: "Charge système", icon: <Gauge className="h-4 w-4" /> },
+    { action: "cameras", label: "État des caméras", icon: <Video className="h-4 w-4" /> },
+    { action: "poe-status", label: "Ports PoE", icon: <PlugZap className="h-4 w-4" /> },
+    { action: "logs", label: "Journal de l'enregistreur", icon: <ScrollText className="h-4 w-4" /> },
+    { action: "capabilities", label: "Capacités du firmware", icon: <ListChecks className="h-4 w-4" /> },
     { action: "sync-time", label: "Mettre à l'heure", icon: <Clock className="h-4 w-4" /> },
   ];
 
@@ -1044,11 +1065,17 @@ function ActionsPanel({
         <Card className="border-[#132255] bg-[#0a1130]/60">
           <CardHeader>
             <CardTitle className="text-base text-[#dde1e4]">
-              {buttons.find((button) => button.action === output.action)?.label ?? output.action}
+              {buttons.find((button) => button.action === output.action)?.label ??
+                (output.action === "poe-power" ? "Alimentation PoE" : output.action)}
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <ActionResult action={output.action} data={output.data} />
+            <ActionResult
+              action={output.action}
+              data={output.data}
+              onAction={(action, actionParams) => void execute(action, actionParams)}
+              busy={running !== null}
+            />
           </CardContent>
         </Card>
       )}
@@ -1327,6 +1354,7 @@ function EditNvrDialog({
     connectionMode: nvr.connectionMode === "p2p" ? "p2p" : "ip",
     ip: nvr.ip ?? "",
     httpPort: nvr.httpPort,
+    rtspPort: nvr.rtspPort,
     port: nvr.port,
     useHttps: nvr.useHttps,
     p2pSerial: nvr.p2pSerial ?? "",
@@ -1346,6 +1374,7 @@ function EditNvrDialog({
         connectionMode: nvr.connectionMode === "p2p" ? "p2p" : "ip",
         ip: nvr.ip ?? "",
         httpPort: nvr.httpPort,
+        rtspPort: nvr.rtspPort,
         port: nvr.port,
         useHttps: nvr.useHttps,
         p2pSerial: nvr.p2pSerial ?? "",
@@ -1369,6 +1398,7 @@ function EditNvrDialog({
           connectionMode: form.connectionMode,
           ip: form.connectionMode === "ip" ? form.ip : null,
           httpPort: form.httpPort,
+          rtspPort: form.rtspPort,
           port: form.port,
           useHttps: form.useHttps,
           p2pSerial: form.connectionMode === "p2p" ? form.p2pSerial : null,
@@ -1496,6 +1526,19 @@ function EditNvrDialog({
               />
             </div>
           )}
+
+          <div className="space-y-2">
+            <Label>Port RTSP (direct vidéo)</Label>
+            <Input
+              type="number"
+              value={form.rtspPort}
+              onChange={(e) => setForm({ ...form, rtspPort: Number(e.target.value) })}
+              className="bg-[#080d24] border-[#132255] w-32"
+            />
+            <p className="text-[11px] text-[#8896b4]">
+              554 par défaut. En P2P, c&apos;est le port RTSP de l&apos;enregistreur lui-même.
+            </p>
+          </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">

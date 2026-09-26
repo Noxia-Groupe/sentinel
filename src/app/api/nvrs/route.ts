@@ -81,6 +81,7 @@ export async function POST(req: NextRequest) {
       ip: connectionMode === "p2p" ? null : ip,
       port: toPort(body.port, 37777),
       httpPort: toPort(body.httpPort, 80),
+      rtspPort: toPort(body.rtspPort, 554),
       useHttps: body.useHttps === true,
       serialNumber: asString(body.serialNumber),
       connectionMode,

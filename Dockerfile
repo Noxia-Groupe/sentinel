@@ -44,7 +44,8 @@ ENV NEXT_TELEMETRY_DISABLED=1
 
 # tzdata : permet à TZ=Europe/Paris (docker-compose) de s'appliquer aussi aux
 # outils système ; Node utilise de toute façon ses propres données de fuseaux.
-RUN apk add --no-cache postgresql-client tzdata
+# ffmpeg : direct vidéo (flux secondaire RTSP retransmis en MJPEG).
+RUN apk add --no-cache postgresql-client tzdata ffmpeg
 
 # Utilitaire de tunnel P2P, joignable via le défaut DAHUA_P2P_HELPER.
 COPY --from=p2p-builder /usr/local/bin/dh-fwd /usr/local/bin/dh-fwd
