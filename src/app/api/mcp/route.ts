@@ -4,6 +4,7 @@ import { checkRateLimit } from "@/lib/rate-limit";
 import { recordAudit } from "@/lib/audit";
 import { requestIp } from "@/lib/actor";
 import { MCP_TOOLS, ToolInputError, describeTool, toolAllowed } from "@/lib/mcp/tools";
+import { MCP_PROMPTS } from "@/lib/mcp/playbooks";
 
 /**
  * Serveur MCP (Model Context Protocol) de Sentinel — transport « Streamable
@@ -20,11 +21,14 @@ const SUPPORTED_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
 const LATEST_PROTOCOL_VERSION = SUPPORTED_PROTOCOL_VERSIONS[0];
 
 const SERVER_INSTRUCTIONS =
-  "Sentinel est le centre d'alarme des enregistreurs vidéo Dahua (NVR) du parc. " +
+  "Sentinel est le centre d'alarme et l'outil de maintenance à distance des enregistreurs vidéo Dahua (NVR) du parc. " +
   "Commencer par sentinel_overview, puis list_alarms (status=new pour les alarmes non traitées). " +
-  "Avant d'agir sur une alarme, vérifier l'équipement (test_nvr, nvr_action snapshot/storage). " +
-  "Consigner chaque analyse dans la main courante (update_alarm avec comment). " +
-  "Les actions sensibles (reboot, alarm-out, configure-alarm-center) exigent une justification claire.";
+  "Maintenance préventive : fleet_maintenance puis maintenance_report sur les enregistreurs à risque. " +
+  "Curatif : get_alarm, get_nvr_health, test_nvr, maintenance_report, puis l'action recommandée par le bilan (nvr_action). " +
+  "Les prompts maintenance_preventive et diagnostic_curatif décrivent ces procédures pas à pas. " +
+  "Toujours lire avant d'agir, vérifier après, et consigner dans la main courante (update_alarm avec comment). " +
+  "Les actions sensibles (reboot, poe-power off, alarm-out, configure-alarm-center) exigent une justification claire ; " +
+  "reboot seulement en dernier recours et avec accord humain.";
 
 type JsonRpcId = string | number | null;
 type JsonRpcRequest = { jsonrpc?: string; id?: JsonRpcId; method?: unknown; params?: unknown };
@@ -122,7 +126,7 @@ async function handleMessage(
       const requested = typeof params.protocolVersion === "string" ? params.protocolVersion : "";
       return rpcResult(id, {
         protocolVersion: SUPPORTED_PROTOCOL_VERSIONS.includes(requested) ? requested : LATEST_PROTOCOL_VERSION,
-        capabilities: { tools: { listChanged: false } },
+        capabilities: { tools: { listChanged: false }, prompts: { listChanged: false } },
         serverInfo: { name: "sentinel", title: "Sentinel — centre d'alarme NVR", version: "1.0.0" },
         instructions: SERVER_INSTRUCTIONS,
       });
@@ -135,6 +139,31 @@ async function handleMessage(
       return rpcResult(id, {
         tools: MCP_TOOLS.filter((tool) => toolAllowed(tool, scopes)).map((tool) => describeTool(tool, scopes)),
       });
+
+    case "prompts/list":
+      return rpcResult(id, {
+        prompts: MCP_PROMPTS.map(({ name, title, description, arguments: args }) => ({
+          name,
+          title,
+          description,
+          arguments: args,
+        })),
+      });
+
+    case "prompts/get": {
+      const prompt = MCP_PROMPTS.find((candidate) => candidate.name === params.name);
+      if (!prompt) return rpcError(id, -32602, `Prompt inconnu : ${String(params.name)}`);
+      const raw = typeof params.arguments === "object" && params.arguments !== null ? params.arguments : {};
+      const args = Object.fromEntries(
+        Object.entries(raw as Record<string, unknown>)
+          .filter(([, value]) => typeof value === "string" && value.trim() !== "")
+          .map(([key, value]) => [key, (value as string).trim()]),
+      );
+      return rpcResult(id, {
+        description: prompt.description,
+        messages: [{ role: "user", content: { type: "text", text: prompt.build(args) } }],
+      });
+    }
 
     case "tools/call": {
       const name = typeof params.name === "string" ? params.name : "";

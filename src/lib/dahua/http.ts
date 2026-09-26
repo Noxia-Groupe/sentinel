@@ -116,6 +116,7 @@ function rawRequest(
   method: string,
   path: string,
   authorization?: string,
+  body?: { data: Buffer; contentType: string },
 ): Promise<DahuaHttpResponse> {
   const transport = target.useHttps ? https : http;
   const timeout = target.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -133,6 +134,7 @@ function rawRequest(
           "User-Agent": "Sentinel/1.0",
           Accept: "*/*",
           ...(authorization ? { Authorization: authorization } : {}),
+          ...(body ? { "Content-Type": body.contentType, "Content-Length": body.data.length } : {}),
         },
         // Les NVR embarquent un certificat auto-signé : la validation de chaîne
         // n'apporte rien ici, la confiance repose sur le réseau (LAN/VPN).
@@ -160,8 +162,33 @@ function rawRequest(
       reject(new DahuaError("unreachable", describeNetworkError(error)));
     });
 
-    req.end();
+    req.end(body?.data);
   });
+}
+
+/**
+ * POST JSON sans authentification HTTP — pour l'API RPC2 (`/RPC2_Login`,
+ * `/RPC2`), qui porte sa propre authentification dans le corps.
+ */
+export async function dahuaPostJson(target: DahuaTarget, path: string, payload: unknown): Promise<unknown> {
+  if (!target.host) {
+    throw new DahuaError("invalid", "Adresse de l'enregistreur non renseignée");
+  }
+  const res = await rawRequest(target, "POST", path, undefined, {
+    data: Buffer.from(JSON.stringify(payload)),
+    contentType: "application/json",
+  });
+  if (res.status === 404) {
+    throw new DahuaError("unsupported", "API RPC2 non disponible sur cet équipement", 404);
+  }
+  if (res.status < 200 || res.status >= 300) {
+    throw new DahuaError("http", `Réponse RPC2 inattendue (HTTP ${res.status})`, res.status);
+  }
+  try {
+    return JSON.parse(res.body.toString("utf8"));
+  } catch {
+    throw new DahuaError("http", "Réponse RPC2 illisible (JSON attendu)");
+  }
 }
 
 function describeNetworkError(error: NodeJS.ErrnoException): string {

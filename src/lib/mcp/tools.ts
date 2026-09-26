@@ -15,6 +15,7 @@ import {
 import { isReachable, loadNvr, testNvrConnection } from "@/lib/dahua/service";
 import { executeNvrAction, isNvrAction, NVR_ACTIONS, type NvrActionName } from "@/lib/dahua/actions";
 import { checkNvr, getSupervisionConfig, nvrHealth } from "@/lib/supervision";
+import type { MaintenanceReport } from "@/lib/dahua/maintenance-report";
 import { supervisionDefinition, type SupervisionIssue } from "@/lib/dahua/events";
 
 /**
@@ -422,10 +423,169 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "fleet_maintenance",
+    title: "État de maintenance du parc",
+    description:
+      "Point de départ de la maintenance préventive, sans solliciter les équipements : pour chaque enregistreur, " +
+      "anomalies ouvertes, disponibilité sur 7 jours, dernière vérification, échecs consécutifs et alarmes ouvertes. " +
+      "Les enregistreurs à risque sont listés en premier.",
+    scope: "nvr:read",
+    inputSchema: {
+      type: "object",
+      properties: {
+        clientId: { type: "string" },
+        onlyAtRisk: { type: "boolean", default: false, description: "Ne renvoyer que les enregistreurs à risque" },
+      },
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true },
+    run: async (args) => {
+      const since = new Date(Date.now() - 7 * 24 * 3600_000);
+      const clientId = str(args, "clientId");
+      const [nvrs, checks] = await Promise.all([
+        prisma.nvr.findMany({
+          where: clientId ? { clientId } : {},
+          orderBy: { name: "asc" },
+          select: {
+            id: true,
+            name: true,
+            status: true,
+            monitored: true,
+            healthIssues: true,
+            consecutiveFailures: true,
+            lastHealthCheckAt: true,
+            lastCheckOk: true,
+            lastSeen: true,
+            model: true,
+            firmware: true,
+            client: { select: { id: true, name: true } },
+            _count: { select: { events: { where: { status: { in: ["new", "acknowledged", "in_progress"] } } } } },
+          },
+        }),
+        prisma.healthCheck.groupBy({
+          by: ["nvrId", "ok"],
+          where: { createdAt: { gte: since }, message: { not: { startsWith: "Non vérifié" } } },
+          _count: { _all: true },
+        }),
+      ]);
+      const availability = new Map<string, { total: number; ok: number }>();
+      for (const row of checks) {
+        const entry = availability.get(row.nvrId) ?? { total: 0, ok: 0 };
+        entry.total += row._count._all;
+        if (row.ok) entry.ok += row._count._all;
+        availability.set(row.nvrId, entry);
+      }
+      const rows = nvrs.map((nvr) => {
+        const a = availability.get(nvr.id);
+        const ratio = a && a.total ? Math.round((a.ok / a.total) * 1000) / 10 : null;
+        const issues = (nvr.healthIssues as SupervisionIssue[]).map((issue) => supervisionDefinition(issue).title);
+        const reasons = [
+          ...issues,
+          ...(ratio !== null && ratio < 99 ? [`disponibilité 7 j : ${ratio} %`] : []),
+          ...(nvr.monitored && !nvr.lastHealthCheckAt ? ["jamais vérifié par la supervision"] : []),
+          ...(!nvr.monitored ? ["hors supervision permanente"] : []),
+          ...(nvr.consecutiveFailures > 0 ? [`${nvr.consecutiveFailures} échec(s) consécutif(s)`] : []),
+        ];
+        return {
+          id: nvr.id,
+          name: nvr.name,
+          client: nvr.client?.name ?? null,
+          model: nvr.model,
+          firmware: nvr.firmware,
+          status: nvr.status,
+          atRisk: reasons.length > 0,
+          reasons,
+          availability7dPercent: ratio,
+          lastHealthCheckAt: nvr.lastHealthCheckAt,
+          lastSeen: nvr.lastSeen,
+          openAlarms: nvr._count.events,
+        };
+      });
+      rows.sort((a, b) => Number(b.atRisk) - Number(a.atRisk) || b.reasons.length - a.reasons.length);
+      const selected = args.onlyAtRisk === true ? rows.filter((row) => row.atRisk) : rows;
+      return text({
+        generatedAt: new Date().toISOString(),
+        total: rows.length,
+        atRisk: rows.filter((row) => row.atRisk).length,
+        nvrs: selected,
+        next: "Pour chaque enregistreur à risque : maintenance_report.",
+      });
+    },
+  },
+  {
+    name: "maintenance_report",
+    title: "Bilan de maintenance d'un enregistreur",
+    description:
+      "Interroge l'enregistreur (disques, horloge, processeur, mémoire, liens réseau, caméras, ports PoE, firmware) " +
+      "et renvoie des constats classés par gravité (critical, warning, info), chacun avec la recommandation et, " +
+      "quand elle existe, l'action nvr_action qui le traite (champ action : name + params). " +
+      "Y ajoute les anomalies de supervision ouvertes et la disponibilité 24 h / 7 j. " +
+      "Outil de base du préventif comme du curatif ; peut prendre jusqu'à une minute via P2P.",
+    scope: "nvr:test",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Identifiant de l'enregistreur" },
+        credentialId: { type: "string" },
+      },
+      required: ["id"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true },
+    run: async (args, actor) => {
+      const nvr = await loadNvr(str(args, "id", true)!);
+      if (!nvr) return failure("Enregistreur introuvable");
+      const [outcome, health] = await Promise.all([
+        executeNvrAction({
+          nvr,
+          action: "maintenance-report",
+          credentialId: str(args, "credentialId"),
+          actor,
+        }),
+        nvrHealth(nvr.id, 5),
+      ]);
+      const supervision = health
+        ? { openIssues: health.openIssues.map((issue) => issue.title), uptime: health.uptime }
+        : null;
+      if (!outcome.ok) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  nvr: { id: nvr.id, name: nvr.name },
+                  reachable: false,
+                  reason: outcome.reason,
+                  message: outcome.message,
+                  supervision,
+                  next: "Enregistreur non interrogeable : consulter get_nvr_health et escalader si la coupure persiste.",
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+          isError: true,
+        };
+      }
+      const report = outcome.data as MaintenanceReport;
+      return text({ nvr: { id: nvr.id, name: nvr.name }, ...report, supervision });
+    },
+  },
+  {
     name: "nvr_action",
     title: "Intervenir sur un enregistreur",
     description:
-      "Intervention à distance. Lecture (scope nvr:test) : device-info, users, channels, storage, alarm-out-state, alarm-center, event-indexes (params.code), snapshot (params.channel, renvoie l'image). Action (scope nvr:control) : sync-time, alarm-out (params.index, params.active), configure-alarm-center (params.dryRun…), reboot. Toutes les interventions sont tracées.",
+      "Intervention à distance sur un enregistreur. " +
+      "Lecture (scope nvr:test) : maintenance-report (bilan complet), system-stats (processeur, mémoire, " +
+      "fonctionnement, interfaces réseau), cameras (état et débits configurés par voie), poe-status (ports PoE), " +
+      "storage, logs (params.hours, params.limit), device-info, users, channels, alarm-out-state, alarm-center, " +
+      "event-indexes (params.code), capabilities (méthodes du firmware), advanced-read (params.method get…/list…, " +
+      "params.params), snapshot (params.channel, renvoie l'image). " +
+      "Intervention (scope nvr:control) : poe-power (params.port, params.mode on|off|cycle, params.offSeconds, " +
+      "params.dryRun), sync-time, alarm-out (params.index, params.active), configure-alarm-center (params.dryRun…), " +
+      "reboot (dernier recours). Toutes les interventions sont tracées.",
     scope: "nvr:test",
     inputSchema: {
       type: "object",
