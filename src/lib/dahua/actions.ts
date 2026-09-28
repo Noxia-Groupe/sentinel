@@ -25,6 +25,7 @@ import {
   setPoePower,
 } from "./maintenance";
 import { buildMaintenanceReport } from "./maintenance-report";
+import { measureSupervisionImpact } from "./impact";
 import { getSupervisionConfig } from "@/lib/supervision";
 import {
   alarmDestination,
@@ -49,6 +50,7 @@ export type NvrActionName =
   | "event-indexes"
   | "snapshot"
   | "maintenance-report"
+  | "impact-test"
   | "system-stats"
   | "cameras"
   | "poe-status"
@@ -125,6 +127,14 @@ export const NVR_ACTIONS: Record<NvrActionName, NvrActionDefinition> = {
     description:
       "Passage complet (disques, horloge, charge, caméras, PoE, firmware) et constats classés par gravité, " +
       "chacun avec l'action recommandée — point de départ du préventif comme du curatif",
+    kind: "read",
+    scope: "nvr:test",
+  },
+  "impact-test": {
+    label: "Mesurer l'impact de la supervision",
+    description:
+      "Compare la charge processeur de l'enregistreur au repos et pendant des vérifications de supervision, " +
+      "mesure le coût réseau d'une vérification et le projette sur la journée (~15 s)",
     kind: "read",
     scope: "nvr:test",
   },
@@ -281,6 +291,11 @@ export async function executeNvrAction(options: {
         // Même seuil de dérive d'horloge que la supervision permanente.
         const config = await getSupervisionConfig();
         return buildMaintenanceReport(target, { clockDriftMinutes: config.clockDriftMinutes || 5 });
+      }
+
+      case "impact-test": {
+        const config = await getSupervisionConfig();
+        return measureSupervisionImpact(target, { nvrId: nvr.id, intervalMinutes: config.intervalMinutes });
       }
 
       case "system-stats":

@@ -14,7 +14,8 @@ import {
 } from "@/lib/dahua/events";
 import { isReachable, loadNvr, testNvrConnection } from "@/lib/dahua/service";
 import { executeNvrAction, isNvrAction, NVR_ACTIONS, type NvrActionName } from "@/lib/dahua/actions";
-import { checkNvr, getSupervisionConfig, nvrHealth } from "@/lib/supervision";
+import { checkNvr, getSupervisionConfig, nvrHealth, supervisionCost } from "@/lib/supervision";
+import { nvrTraffic } from "@/lib/traffic";
 import type { MaintenanceReport } from "@/lib/dahua/maintenance-report";
 import { supervisionDefinition, type SupervisionIssue } from "@/lib/dahua/events";
 
@@ -395,6 +396,29 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "get_nvr_traffic",
+    title: "Consommation réseau d'un enregistreur",
+    description:
+      "Trafic échangé par Sentinel avec l'enregistreur : débit en cours (octets/s), volumes 24 h et 7 jours par " +
+      "origine (supervision, interventions, agent, direct, alarmes), profil horaire, et coût observé d'une " +
+      "vérification de supervision. Pour mesurer l'effet sur le processeur : nvr_action impact-test.",
+    scope: "nvr:read",
+    inputSchema: {
+      type: "object",
+      properties: { id: { type: "string" } },
+      required: ["id"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true },
+    run: async (args) => {
+      const id = str(args, "id", true)!;
+      const exists = await prisma.nvr.findUnique({ where: { id }, select: { id: true, name: true } });
+      if (!exists) return failure("Enregistreur introuvable");
+      const [traffic, supervision] = await Promise.all([nvrTraffic(id), supervisionCost(id)]);
+      return text({ nvr: exists, ...traffic, supervision });
+    },
+  },
+  {
     name: "run_health_check",
     title: "Vérifier un enregistreur maintenant",
     description:
@@ -578,7 +602,7 @@ export const MCP_TOOLS: McpTool[] = [
     title: "Intervenir sur un enregistreur",
     description:
       "Intervention à distance sur un enregistreur. " +
-      "Lecture (scope nvr:test) : maintenance-report (bilan complet), system-stats (processeur, mémoire, " +
+      "Lecture (scope nvr:test) : maintenance-report (bilan complet), impact-test (charge processeur au repos vs pendant la supervision, coût réseau), system-stats (processeur, mémoire, " +
       "fonctionnement, interfaces réseau), cameras (état et débits configurés par voie), poe-status (ports PoE), " +
       "storage, logs (params.hours, params.limit), device-info, users, channels, alarm-out-state, alarm-center, " +
       "event-indexes (params.code), capabilities (méthodes du firmware), advanced-read (params.method get…/list…, " +

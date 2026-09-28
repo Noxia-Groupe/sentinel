@@ -408,6 +408,34 @@ consommation PoE ne sont affichés que si le firmware les expose — Sentinel le
 découvre alors lui-même (`system.listMethod`) et les affiche tels quels. Le
 diagnostic *Capacités du firmware* montre ce qu'un modèle donné permet.
 
+## Consommation réseau et impact de la supervision
+
+Sentinel mesure le trafic qu'il échange avec chaque enregistreur : octets
+réellement lus et écrits sur la connexion (HTTP, RPC2, RTSP du direct), et taille
+des alarmes reçues. Chaque échange est attribué à son origine : *supervision
+automatique*, *interventions et tests* (utilisateurs), *agent* (API, Hermes),
+*direct vidéo*, *alarmes reçues*.
+
+- **Liste des enregistreurs** : colonne *Débit Sentinel*, avec le débit en cours
+  (↓ reçu, ↑ envoyé, rafraîchi toutes les 5 s) et le volume des dernières 24 h.
+  Le même débit s'affiche dans l'en-tête de la fiche.
+- **Fiche → Supervision → Consommation réseau de Sentinel** :
+  - débit en cours et pointe sur 5 min ;
+  - volumes 24 h / 7 jours par origine ;
+  - volume heure par heure (supervision / autres usages) ;
+  - coût d'une vérification de supervision (octets, requêtes, temps de
+    réponse) et projection par jour.
+- **Mesurer l'impact** (même panneau) : compare la charge processeur de
+  l'enregistreur au repos et pendant des vérifications identiques à celles de la
+  supervision, puis donne la durée et le coût réseau d'une vérification, la
+  projection par jour et par mois, et un verdict (négligeable, faible, notable).
+  Dure une quinzaine de secondes.
+- Pour les agents : outil MCP `get_nvr_traffic`, action `impact-test`.
+
+Les débits sont en bits par seconde, les volumes en octets. Les cumuls horaires
+sont conservés 90 jours. En P2P, l'encapsulation du tunnel et ses messages de
+maintien de connexion s'ajoutent au trafic mesuré.
+
 ## Direct vidéo
 
 Onglet *Direct* : **une seule caméra à la fois**, choisie dans la liste des
@@ -490,6 +518,7 @@ prêt à coller. Outils disponibles, **filtrés selon les scopes de la clé** :
 | `list_clients`, `list_nvrs`, `get_nvr` | `nvr:read` | Inventaire et derniers tests |
 | `test_nvr` | `nvr:test` | Test d'accès réel (IP ou P2P) et droits du compte |
 | `get_nvr_health` | `nvr:read` | Supervision : anomalies ouvertes, disponibilité, historique |
+| `get_nvr_traffic` | `nvr:read` | Débit en cours, volumes 24 h / 7 j par origine, coût d'une vérification |
 | `run_health_check` | `nvr:test` | Vérification de supervision immédiate |
 | `fleet_maintenance` | `nvr:read` | Parc à risque (anomalies, disponibilité 7 j, jamais vérifiés), sans solliciter les équipements |
 | `maintenance_report` | `nvr:test` | Bilan d'un enregistreur : constats classés et action `nvr_action` recommandée |

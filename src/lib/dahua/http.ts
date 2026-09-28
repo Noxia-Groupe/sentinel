@@ -1,6 +1,8 @@
 import http from "node:http";
 import https from "node:https";
 import crypto from "node:crypto";
+import type net from "node:net";
+import { recordTraffic } from "@/lib/traffic";
 
 /**
  * Couche transport vers l'API CGI des équipements Dahua.
@@ -122,6 +124,18 @@ function rawRequest(
   const timeout = target.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   return new Promise((resolve, reject) => {
+    // Comptage du trafic : octets réellement échangés sur la connexion pendant
+    // cette requête (la connexion peut être réutilisée, d'où les écarts).
+    let socket: net.Socket | undefined;
+    let readAtStart = 0;
+    let writtenAtStart = 0;
+    let counted = false;
+    const count = () => {
+      if (counted || !socket) return;
+      counted = true;
+      recordTraffic(socket.bytesRead - readAtStart, socket.bytesWritten - writtenAtStart);
+    };
+
     const req = transport.request(
       {
         host: target.host,
@@ -143,21 +157,29 @@ function rawRequest(
       (res) => {
         const chunks: Buffer[] = [];
         res.on("data", (chunk: Buffer) => chunks.push(chunk));
-        res.on("end", () =>
+        res.on("end", () => {
+          count();
           resolve({
             status: res.statusCode ?? 0,
             headers: res.headers,
             body: Buffer.concat(chunks),
-          }),
-        );
+          });
+        });
       },
     );
+
+    req.on("socket", (s: net.Socket) => {
+      socket = s;
+      readAtStart = s.bytesRead;
+      writtenAtStart = s.bytesWritten;
+    });
 
     req.on("timeout", () => {
       req.destroy(new DahuaError("unreachable", `Délai dépassé après ${timeout} ms`));
     });
 
     req.on("error", (error: NodeJS.ErrnoException) => {
+      count();
       if (error instanceof DahuaError) return reject(error);
       reject(new DahuaError("unreachable", describeNetworkError(error)));
     });
