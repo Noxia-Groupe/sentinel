@@ -8,6 +8,7 @@ import {
   Copy,
   Download,
   KeyRound,
+  ListChecks,
   Stethoscope,
   Pencil,
   Plus,
@@ -25,7 +26,14 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { HERMES_SCHEDULE_REQUEST, MCP_PROMPTS, hermesSkill } from "@/lib/mcp/playbooks";
+import {
+  DEFAULT_ALARM_INSTRUCTIONS,
+  DEFAULT_OUTAGE_INSTRUCTIONS,
+  HERMES_SCHEDULE_REQUEST,
+  MCP_PROMPTS,
+  hermesConfigBlock,
+  hermesSkill,
+} from "@/lib/mcp/playbooks";
 
 /**
  * Intégration Hermes Agent :
@@ -76,8 +84,6 @@ const EMPTY_DRAFT: Draft = {
   notifyNvrStatus: true,
 };
 
-const HERMES_SCOPES = ["alarms:read", "alarms:write", "nvr:read", "nvr:test"];
-
 function useOrigin(): string {
   const [origin, setOrigin] = useState("https://sentinel.example");
   useEffect(() => setOrigin(window.location.origin), []);
@@ -111,53 +117,62 @@ function CopyBlock({ label, value }: { label: string; value: string }) {
 }
 
 // ---------------------------------------------------------------------------
-// 1. Connexion MCP
+// 1. Connexion en une étape
 // ---------------------------------------------------------------------------
 
-function mcpSnippet(origin: string, secret: string): string {
-  return `# ~/.hermes/config.yaml — sur le serveur Hermes
-mcp_servers:
-  sentinel:
-    url: "${origin}/api/mcp"
-    headers:
-      Authorization: "Bearer ${secret}"
-    timeout: 120          # un test via tunnel P2P peut prendre ~30 s
-    connect_timeout: 30`;
-}
+/** Rafraîchit les blocs de la section après une connexion ou un test. */
+const HERMES_CHANGED = "sentinel:hermes-changed";
 
-function mcpTestCommand(origin: string, secret: string): string {
-  return `curl -s ${origin}/api/mcp \\
-  -H "Authorization: Bearer ${secret}" \\
-  -H "Content-Type: application/json" \\
-  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}'`;
-}
+const DELIVER_OPTIONS = ["telegram", "discord", "slack", "whatsapp", "signal", "email"];
 
-function HermesMcpCard() {
+type ConnectResult = {
+  key: { secret: string; scopes: string[] };
+  webhook: { id: string; url: string; secret: string } | null;
+};
+
+function HermesConnect() {
   const origin = useOrigin();
+  const [webhookUrl, setWebhookUrl] = useState("");
+  const [deliver, setDeliver] = useState("telegram");
   const [allowControl, setAllowControl] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [secret, setSecret] = useState<string | null>(null);
+  const [result, setResult] = useState<ConnectResult | null>(null);
+  const [testing, setTesting] = useState(false);
 
-  const create = async () => {
+  const connect = async () => {
     setBusy(true);
     try {
-      const res = await fetch("/api/api-keys", {
+      const res = await fetch("/api/hermes/connect", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: allowControl ? "Hermes Agent (supervision + interventions)" : "Hermes Agent (supervision)",
-          scopes: allowControl ? [...HERMES_SCOPES, "nvr:control"] : HERMES_SCOPES,
-        }),
+        body: JSON.stringify({ webhookUrl, allowControl }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        toast.error(data.error ?? "Création de la clé impossible");
+        toast.error(data.error ?? "Connexion impossible");
         return;
       }
-      setSecret(data.secret);
+      setResult(data);
+      window.dispatchEvent(new Event(HERMES_CHANGED));
       window.dispatchEvent(new Event("sentinel:api-keys-changed"));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const test = async (endpointId: string) => {
+    setTesting(true);
+    try {
+      const res = await fetch(`/api/outbound-webhooks/${endpointId}/test`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.ok) {
+        toast.success("Hermes a bien reçu le test : il doit vous répondre sur votre messagerie");
+      } else {
+        toast.error(`Hermes n'a pas reçu le test : ${data.status ? `HTTP ${data.status} — ` : ""}${data.error ?? ""}`);
+      }
+      window.dispatchEvent(new Event(HERMES_CHANGED));
+    } finally {
+      setTesting(false);
     }
   };
 
@@ -166,14 +181,43 @@ function HermesMcpCard() {
       <div className="space-y-1">
         <h3 className="text-sm font-semibold text-[#dde1e4] flex items-center gap-2">
           <KeyRound className="h-4 w-4 text-[#4d9fe8]" />
-          Connexion de l&apos;agent (MCP)
+          Connecter Hermes
         </h3>
         <p className="text-xs text-[#8896b4] leading-relaxed">
-          Hermes se connecte au serveur MCP de Sentinel (<span className="font-mono">{origin}/api/mcp</span>) avec
-          une clé d&apos;API dédiée. Il y trouve les outils de supervision : vue d&apos;ensemble, alarmes et main
-          courante, inventaire, tests d&apos;accès, captures et interventions. Chaque appel est tracé au nom de la
-          clé ; les mots de passe ne sont jamais exposés par ce canal.
+          Une seule étape : Sentinel prépare l&apos;accès de Hermes (outils MCP) et le webhook qui le réveille en cas
+          d&apos;alarme ou de panne, puis vous donne <strong className="text-[#dde1e4]">un seul bloc</strong> à coller
+          dans la configuration de Hermes. Ce que Hermes doit faire à chaque alarme se règle ensuite ici, dans
+          « Consignes », sans retoucher Hermes.
         </p>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-[1fr_12rem]">
+        <div className="space-y-1.5">
+          <Label className="text-[#8896b4] text-xs">Adresse du webhook de Hermes</Label>
+          <Input
+            value={webhookUrl}
+            onChange={(e) => setWebhookUrl(e.target.value)}
+            placeholder="http://serveur-hermes:8644/webhooks/sentinel"
+            className="bg-[#080d24] border-[#132255] font-mono text-sm"
+          />
+          <p className="text-[11px] text-[#8896b4]">
+            Laisser vide si Hermes ne doit pas être réveillé par Sentinel (il pourra quand même l&apos;interroger).
+          </p>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-[#8896b4] text-xs">Hermes vous répond sur</Label>
+          <select
+            value={deliver}
+            onChange={(e) => setDeliver(e.target.value)}
+            className="w-full rounded-md border border-[#132255] bg-[#080d24] px-3 py-2 text-sm text-[#dde1e4]"
+          >
+            {DELIVER_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       <label className="flex items-start gap-2.5 rounded-lg border border-[#132255] bg-[#080d24] p-3 cursor-pointer">
@@ -187,37 +231,66 @@ function HermesMcpCard() {
           Autoriser les interventions
           <span className="block text-[11px] text-[#8896b4]">
             Maintenance curative : ports PoE (relance d&apos;une caméra figée), mise à l&apos;heure, relais,
-            redémarrage, provisionnement du centre d&apos;alarme (scope{" "}
-            <span className="font-mono">nvr:control</span>). Sans cette case, Hermes observe, teste et traite les
-            alarmes, mais ne modifie pas les équipements.
+            redémarrage (scope <span className="font-mono">nvr:control</span>). Sans cette case, Hermes observe,
+            diagnostique et traite les alarmes, mais ne modifie pas les équipements.
           </span>
         </span>
       </label>
 
-      <Button onClick={() => void create()} disabled={busy} className="bg-[#0251a1] hover:bg-[#0363c2] text-white">
-        <Bot className="h-4 w-4" />
-        Générer la clé de connexion Hermes
+      <Button onClick={() => void connect()} disabled={busy} className="bg-[#0251a1] hover:bg-[#0363c2] text-white">
+        {busy ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Bot className="h-4 w-4" />}
+        Connecter Hermes
       </Button>
+      <p className="text-[11px] text-[#8896b4]">
+        Relancer la connexion remplace la précédente : l&apos;ancienne clé est révoquée, le webhook garde ses filtres
+        et ses consignes.
+      </p>
 
-      <Dialog open={secret !== null} onOpenChange={(open) => !open && setSecret(null)}>
-        <DialogContent className="border-[#132255] bg-[#0d1537] text-[#dde1e4] sm:max-w-2xl">
+      <Dialog open={result !== null} onOpenChange={(open) => !open && setResult(null)}>
+        <DialogContent className="border-[#132255] bg-[#0d1537] text-[#dde1e4] sm:max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Clé de connexion Hermes</DialogTitle>
+            <DialogTitle>Plus qu&apos;à coller ce bloc dans Hermes</DialogTitle>
           </DialogHeader>
-          {secret && (
+          {result && (
             <div className="space-y-4">
+              <ol className="list-decimal space-y-1 pl-5 text-sm text-[#dde1e4]">
+                <li>
+                  Coller le bloc dans <span className="font-mono">~/.hermes/config.yaml</span>{" "}sur le serveur Hermes
+                  (s&apos;il contient déjà <span className="font-mono">mcp_servers</span> ou{" "}
+                  <span className="font-mono">platforms</span>, y ajouter les entrées « sentinel »).
+                </li>
+                <li>Redémarrer Hermes.</li>
+                {result.webhook ? (
+                  <li>
+                    Cliquer sur « Tester la liaison » : Hermes interroge Sentinel et vous répond sur {deliver}.
+                  </li>
+                ) : (
+                  <li>Demander à Hermes : « Donne-moi l&apos;état de Sentinel ».</li>
+                )}
+              </ol>
               <p className="text-xs text-amber-300">
-                Cette clé ne sera plus jamais affichée. Copiez la configuration maintenant ; en cas de perte, révoquez
-                la clé dans « Clés d&apos;API » et générez-en une nouvelle.
+                Ce bloc contient les secrets de connexion : il ne sera plus affiché. En cas de perte, relancez
+                « Connecter Hermes ».
               </p>
-              <CopyBlock label="Configuration à ajouter côté Hermes" value={mcpSnippet(origin, secret)} />
-              <p className="text-[11px] text-[#8896b4]">
-                Puis redémarrer Hermes (ou recharger ses serveurs MCP) : les outils <span className="font-mono">sentinel_overview</span>,{" "}
-                <span className="font-mono">fleet_maintenance</span>, <span className="font-mono">maintenance_report</span>,{" "}
-                <span className="font-mono">nvr_action</span>… apparaissent. La connexion s&apos;affiche ensuite dans
-                « État de la connexion » ci-dessous dès le premier appel.
-              </p>
-              <CopyBlock label="Test depuis le serveur Hermes (doit répondre « sentinel »)" value={mcpTestCommand(origin, secret)} />
+              <CopyBlock
+                label="Configuration Hermes (un seul bloc)"
+                value={hermesConfigBlock({
+                  origin,
+                  mcpKey: result.key.secret,
+                  webhookSecret: result.webhook?.secret,
+                  deliver,
+                })}
+              />
+              {result.webhook && (
+                <Button
+                  onClick={() => void test(result.webhook!.id)}
+                  disabled={testing}
+                  className="bg-[#0251a1] hover:bg-[#0363c2] text-white"
+                >
+                  {testing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                  Tester la liaison
+                </Button>
+              )}
             </div>
           )}
         </DialogContent>
@@ -253,8 +326,26 @@ function formatWhen(value: string | null): string {
   return new Date(value).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
 }
 
+type HermesWebhook = {
+  id: string;
+  url: string;
+  enabled: boolean;
+  lastDelivery: {
+    eventType: string;
+    status: "pending" | "success" | "failed";
+    lastStatus: number | null;
+    lastError: string | null;
+    createdAt: string;
+  } | null;
+};
+
 function HermesStatus() {
-  const [data, setData] = useState<{ keys: HermesKey[]; activity: HermesActivity[] } | null>(null);
+  const [data, setData] = useState<{
+    keys: HermesKey[];
+    activity: HermesActivity[];
+    webhook: HermesWebhook | null;
+  } | null>(null);
+  const [testing, setTesting] = useState(false);
 
   const load = useCallback(async () => {
     const res = await fetch("/api/hermes/status");
@@ -265,8 +356,25 @@ function HermesStatus() {
     void load();
     const refresh = () => void load();
     window.addEventListener("sentinel:api-keys-changed", refresh);
-    return () => window.removeEventListener("sentinel:api-keys-changed", refresh);
+    window.addEventListener(HERMES_CHANGED, refresh);
+    return () => {
+      window.removeEventListener("sentinel:api-keys-changed", refresh);
+      window.removeEventListener(HERMES_CHANGED, refresh);
+    };
   }, [load]);
+
+  const test = async (endpointId: string) => {
+    setTesting(true);
+    try {
+      const res = await fetch(`/api/outbound-webhooks/${endpointId}/test`, { method: "POST" });
+      const body = await res.json().catch(() => ({}));
+      if (res.ok && body.ok) toast.success("Test reçu par Hermes : il doit vous répondre sur votre messagerie");
+      else toast.error(`Hermes n'a pas reçu le test : ${body.status ? `HTTP ${body.status} — ` : ""}${body.error ?? ""}`);
+      await load();
+    } finally {
+      setTesting(false);
+    }
+  };
 
   return (
     <div className="space-y-3">
@@ -284,11 +392,48 @@ function HermesStatus() {
           Actualiser
         </button>
       </div>
+      {data?.webhook && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[#132255] bg-[#080d24] px-3 py-2">
+          <span className="text-sm text-[#dde1e4]">
+            Sentinel → Hermes{" "}
+            <span className="font-mono text-[11px] text-[#8896b4] break-all">{data.webhook.url}</span>
+          </span>
+          <span className="flex items-center gap-2 text-[11px] text-[#8896b4]">
+            {!data.webhook.enabled ? (
+              <Badge className="bg-[#132255] text-[#8896b4] border-[#1a2d66]">désactivé</Badge>
+            ) : !data.webhook.lastDelivery ? (
+              <Badge className="bg-amber-400/10 text-amber-300 border-amber-400/25">jamais testé</Badge>
+            ) : data.webhook.lastDelivery.status === "success" ? (
+              <Badge className="bg-green-500/10 text-green-400 border-green-500/25">reçu par Hermes</Badge>
+            ) : data.webhook.lastDelivery.status === "failed" ? (
+              <Badge className="bg-red-500/10 text-red-400 border-red-500/25">échec</Badge>
+            ) : (
+              <Badge className="bg-[#132255] text-[#8896b4] border-[#1a2d66]">en cours</Badge>
+            )}
+            {data.webhook.lastDelivery && (
+              <>
+                dernier envoi {formatWhen(data.webhook.lastDelivery.createdAt)}
+                {data.webhook.lastDelivery.status === "failed" && data.webhook.lastDelivery.lastError
+                  ? ` — ${data.webhook.lastDelivery.lastError.slice(0, 80)}`
+                  : ""}
+              </>
+            )}
+            <SmallButton
+              title="Envoyer un test à Hermes"
+              icon={testing ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
+              onClick={() => void test(data.webhook!.id)}
+              disabled={testing}
+            >
+              Tester la liaison
+            </SmallButton>
+          </span>
+        </div>
+      )}
       {!data ? (
         <Skeleton className="h-16 w-full" />
       ) : data.keys.length === 0 ? (
         <p className="text-xs text-[#8896b4]">
-          Aucune clé Hermes active : générer la clé de connexion ci-dessus, puis la déclarer côté Hermes.
+          Hermes n&apos;est pas encore connecté : utilisez « Connecter Hermes » ci-dessus.
         </p>
       ) : (
         <ul className="space-y-2">
@@ -298,7 +443,10 @@ function HermesStatus() {
               className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[#132255] bg-[#080d24] px-3 py-2"
             >
               <span className="text-sm text-[#dde1e4]">
-                {key.name} <span className="font-mono text-[11px] text-[#8896b4]">{key.prefix}…</span>
+                Hermes → Sentinel{" "}
+                <span className="font-mono text-[11px] text-[#8896b4]">
+                  {key.name.replace(/^Hermes Agent\s*/, "")} {key.prefix}…
+                </span>
               </span>
               <span className="flex items-center gap-2 text-[11px] text-[#8896b4]">
                 {key.expired ? (
@@ -338,6 +486,147 @@ function HermesStatus() {
 }
 
 // ---------------------------------------------------------------------------
+// Consignes envoyées à Hermes
+// ---------------------------------------------------------------------------
+
+type InstructionsEndpoint = {
+  id: string;
+  name: string;
+  alarmInstructions: string | null;
+  outageInstructions: string | null;
+};
+
+function HermesInstructions() {
+  const [endpoint, setEndpoint] = useState<InstructionsEndpoint | null | undefined>(undefined);
+  const [alarm, setAlarm] = useState("");
+  const [outage, setOutage] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    const res = await fetch("/api/outbound-webhooks");
+    if (!res.ok) return;
+    const data = (await res.json()) as { endpoints: InstructionsEndpoint[] };
+    const hermes = data.endpoints.find((e) => e.name === "Hermes Agent") ?? null;
+    setEndpoint(hermes);
+    setAlarm(hermes?.alarmInstructions ?? DEFAULT_ALARM_INSTRUCTIONS);
+    setOutage(hermes?.outageInstructions ?? DEFAULT_OUTAGE_INSTRUCTIONS);
+  }, []);
+
+  useEffect(() => {
+    void load();
+    const refresh = () => void load();
+    window.addEventListener(HERMES_CHANGED, refresh);
+    return () => window.removeEventListener(HERMES_CHANGED, refresh);
+  }, [load]);
+
+  const save = async () => {
+    if (!endpoint) return;
+    setSaving(true);
+    try {
+      // Texte identique aux consignes par défaut : on n'enregistre rien, les
+      // futures améliorations des consignes par défaut s'appliqueront.
+      const res = await fetch(`/api/outbound-webhooks/${endpoint.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          alarmInstructions: alarm.trim() === DEFAULT_ALARM_INSTRUCTIONS ? null : alarm,
+          outageInstructions: outage.trim() === DEFAULT_OUTAGE_INSTRUCTIONS ? null : outage,
+        }),
+      });
+      if (res.ok) toast.success("Consignes enregistrées : elles s'appliquent dès le prochain envoi");
+      else toast.error((await res.json().catch(() => ({}))).error ?? "Enregistrement impossible");
+      await load();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="space-y-1">
+        <h3 className="text-sm font-semibold text-[#dde1e4] flex items-center gap-2">
+          <ListChecks className="h-4 w-4 text-[#4d9fe8]" />
+          Consignes envoyées à Hermes
+        </h3>
+        <p className="text-xs text-[#8896b4] leading-relaxed">
+          Jointes à chaque webhook : c&apos;est ce que Hermes fait en le recevant. Écrivez-les comme à un technicien ;
+          elles s&apos;appliquent dès le prochain envoi, sans toucher à Hermes.
+        </p>
+      </div>
+      {endpoint === undefined ? (
+        <Skeleton className="h-24 w-full" />
+      ) : endpoint === null ? (
+        <p className="text-xs text-[#8896b4]">
+          Disponible une fois Hermes connecté avec une adresse de webhook (« Connecter Hermes » ci-dessus).
+        </p>
+      ) : (
+        <>
+          <InstructionField
+            label="À la réception d'une alarme"
+            value={alarm}
+            onChange={setAlarm}
+            onReset={() => setAlarm(DEFAULT_ALARM_INSTRUCTIONS)}
+          />
+          <InstructionField
+            label="Quand un enregistreur tombe en panne ou revient"
+            value={outage}
+            onChange={setOutage}
+            onReset={() => setOutage(DEFAULT_OUTAGE_INSTRUCTIONS)}
+          />
+          <Button
+            onClick={() => void save()}
+            disabled={saving}
+            className="bg-[#0251a1] hover:bg-[#0363c2] text-white"
+          >
+            <Check className="h-4 w-4" />
+            Enregistrer les consignes
+          </Button>
+          <p className="text-[11px] text-[#8896b4]">
+            Quelles alarmes réveillent Hermes (criticité, catégories, clients) : bouton « Modifier » du webhook « Hermes
+            Agent » ci-dessous.
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
+function InstructionField({
+  label,
+  value,
+  onChange,
+  onReset,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  onReset: () => void;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between">
+        <Label className="text-[#8896b4] text-xs">{label}</Label>
+        <button
+          type="button"
+          onClick={onReset}
+          className="inline-flex items-center gap-1 text-[11px] text-[#4d9fe8] hover:text-[#dde1e4]"
+        >
+          <RotateCcw className="h-3 w-3" />
+          Consignes par défaut
+        </button>
+      </div>
+      <textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        rows={7}
+        maxLength={4000}
+        className="w-full rounded-md border border-[#132255] bg-[#080d24] px-3 py-2 text-sm leading-relaxed text-[#dde1e4]"
+      />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Compétence de maintenance
 // ---------------------------------------------------------------------------
 
@@ -357,7 +646,7 @@ function HermesSkill() {
       <div className="space-y-1">
         <h3 className="text-sm font-semibold text-[#dde1e4] flex items-center gap-2">
           <Stethoscope className="h-4 w-4 text-[#4d9fe8]" />
-          Maintenance préventive et curative
+          Pour aller plus loin (facultatif) : maintenance préventive
         </h3>
         <p className="text-xs text-[#8896b4] leading-relaxed">
           Hermes dispose des outils <span className="font-mono">fleet_maintenance</span> (parc à risque) et{" "}
@@ -369,7 +658,8 @@ function HermesSkill() {
               <span className="font-mono">{prompt.name}</span>
             </span>
           ))}
-          . La compétence ci-dessous les lui apprend durablement : la déposer dans{" "}
+          . Les consignes ci-dessus suffisent pour réagir aux alarmes ; la compétence ci-dessous sert aux tournées
+          préventives planifiées. La déposer dans{" "}
           <span className="font-mono">~/.hermes/skills/sentinel-maintenance/SKILL.md</span> sur le serveur Hermes.
         </p>
       </div>
@@ -390,13 +680,7 @@ function HermesSkill() {
 // 2. Webhooks sortants
 // ---------------------------------------------------------------------------
 
-function hermesRouteSnippet(endpoint: Pick<Endpoint, "notifyStatusChanges" | "notifyNvrStatus">, secret: string) {
-  const events = [
-    "alarm.created",
-    ...(endpoint.notifyStatusChanges ? ["alarm.status_changed"] : []),
-    ...(endpoint.notifyNvrStatus ? ["nvr.offline", "nvr.online"] : []),
-    "sentinel.test",
-  ];
+function hermesRouteSnippet(secret: string) {
   return `# ~/.hermes/config.yaml — sur le serveur Hermes
 platforms:
   webhook:
@@ -405,13 +689,11 @@ platforms:
       routes:
         sentinel:
           secret: "${secret}"
-          events: [${events.map((e) => `"${e}"`).join(", ")}]
           prompt: |
-            Événement Sentinel : {summary}
+            {instructions}
+
+            Événement : {summary}
             Données complètes : {__raw__}
-            Applique la procédure de diagnostic curatif de la compétence sentinel-maintenance
-            (outils MCP Sentinel : get_alarm, get_nvr_health, maintenance_report, puis l'action
-            recommandée si elle est sûre), et consigne ton analyse dans la main courante de l'alarme.
           deliver: "telegram"   # où Hermes rend compte : telegram, discord, slack…
 
 # URL à renseigner dans Sentinel : http://<serveur-hermes>:8644/webhooks/sentinel`;
@@ -825,7 +1107,7 @@ function OutboundWebhooksManager() {
                 Ce secret ne sera plus jamais affiché. Reportez-le dans la route Hermes ; en cas de perte, régénérez-le.
               </p>
               <CopyBlock label="Secret" value={revealed.secret} />
-              <CopyBlock label="Route à ajouter côté Hermes" value={hermesRouteSnippet(revealed.endpoint, revealed.secret)} />
+              <CopyBlock label="Route à ajouter côté Hermes" value={hermesRouteSnippet(revealed.secret)} />
               <p className="text-[11px] text-[#8896b4]">
                 Une fois Hermes redémarré, utilisez « Tester » : l&apos;événement <span className="font-mono">sentinel.test</span>{" "}
                 doit être accepté (HTTP 2xx).
@@ -895,17 +1177,19 @@ export function HermesIntegration() {
           Hermes Agent
         </CardTitle>
         <CardDescription className="text-[#8896b4]">
-          Relier un agent Hermes à Sentinel : il surveille et agit à travers la plateforme (MCP), et Sentinel le
-          prévient des alarmes et pannes que vous choisissez (webhooks).
+          Relier un agent Hermes à Sentinel en une étape : Sentinel le réveille à chaque alarme ou panne choisie, avec
+          les consignes à suivre, et Hermes interroge ou agit à travers Sentinel.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-8">
-        <HermesMcpCard />
+        <HermesConnect />
         <HermesStatus />
         <div className="border-t border-[#132255]" />
-        <HermesSkill />
+        <HermesInstructions />
         <div className="border-t border-[#132255]" />
         <OutboundWebhooksManager />
+        <div className="border-t border-[#132255]" />
+        <HermesSkill />
       </CardContent>
     </Card>
   );

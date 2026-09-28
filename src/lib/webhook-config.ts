@@ -13,7 +13,20 @@ export type WebhookSettings = {
   clientIds?: string[];
   notifyStatusChanges?: boolean;
   notifyNvrStatus?: boolean;
+  alarmInstructions?: string | null;
+  outageInstructions?: string | null;
 };
+
+/** Longueur maximale d'une consigne envoyée à l'agent. */
+const MAX_INSTRUCTIONS = 4000;
+
+/** Chaîne vide = retour aux consignes par défaut. */
+function instructions(value: unknown): string | null | undefined {
+  if (value === null) return null;
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim().slice(0, MAX_INSTRUCTIONS);
+  return trimmed || null;
+}
 
 function stringList(value: unknown, accept: (item: unknown) => boolean): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
@@ -33,6 +46,10 @@ export function parseWebhookSettings(body: Record<string, unknown>): WebhookSett
   if (categories) settings.categories = categories;
   const clientIds = stringList(body.clientIds, (item) => typeof item === "string" && item.length > 0);
   if (clientIds) settings.clientIds = clientIds;
+  const alarm = instructions(body.alarmInstructions);
+  if (alarm !== undefined) settings.alarmInstructions = alarm;
+  const outage = instructions(body.outageInstructions);
+  if (outage !== undefined) settings.outageInstructions = outage;
   return settings;
 }
 
@@ -49,6 +66,8 @@ export function publicEndpoint(endpoint: {
   clientIds: string[];
   notifyStatusChanges: boolean;
   notifyNvrStatus: boolean;
+  alarmInstructions: string | null;
+  outageInstructions: string | null;
   createdBy: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -63,6 +82,8 @@ export function publicEndpoint(endpoint: {
     clientIds: endpoint.clientIds,
     notifyStatusChanges: endpoint.notifyStatusChanges,
     notifyNvrStatus: endpoint.notifyNvrStatus,
+    alarmInstructions: endpoint.alarmInstructions,
+    outageInstructions: endpoint.outageInstructions,
     createdBy: endpoint.createdBy,
     createdAt: endpoint.createdAt,
     updatedAt: endpoint.updatedAt,

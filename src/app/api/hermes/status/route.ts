@@ -4,8 +4,9 @@ import { prisma } from "@/lib/prisma";
 
 const CONNECTED_WINDOW_MS = 15 * 60_000;
 
-// GET /api/hermes/status — Clés de connexion Hermes, dernière utilisation et
-// dernières actions menées par l'agent (journal d'audit).
+// GET /api/hermes/status — Liaison Hermes dans les deux sens : clés MCP
+// (dernière utilisation, dernières actions de l'agent) et webhook qui réveille
+// Hermes (dernier envoi).
 export async function GET(req: NextRequest) {
   const guard = await requireSuperadmin(req);
   if (!guard.ok) return guard.response;
@@ -25,6 +26,22 @@ export async function GET(req: NextRequest) {
       })
     : [];
 
+  // Sens Sentinel → Hermes : le webhook de la connexion en une étape et son dernier envoi.
+  const endpoint = await prisma.webhookEndpoint.findFirst({
+    where: { name: "Hermes Agent" },
+    orderBy: { createdAt: "asc" },
+    select: {
+      id: true,
+      url: true,
+      enabled: true,
+      deliveries: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: { eventType: true, status: true, lastStatus: true, lastError: true, createdAt: true, deliveredAt: true },
+      },
+    },
+  });
+
   const now = Date.now();
   return NextResponse.json({
     keys: keys.map((key) => ({
@@ -34,5 +51,8 @@ export async function GET(req: NextRequest) {
       canIntervene: key.scopes.includes("nvr:control"),
     })),
     activity,
+    webhook: endpoint
+      ? { id: endpoint.id, url: endpoint.url, enabled: endpoint.enabled, lastDelivery: endpoint.deliveries[0] ?? null }
+      : null,
   });
 }

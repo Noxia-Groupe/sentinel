@@ -337,6 +337,11 @@ model WebhookEndpoint {
   notifyStatusChanges Boolean @default(false) // alarm.status_changed
   notifyNvrStatus     Boolean @default(true) // nvr.offline / nvr.online
 
+  // Consignes transmises à l'agent dans chaque envoi (champ `instructions`) :
+  // ce qu'il doit faire en recevant une alarme, une panne. Vide = consignes par défaut.
+  alarmInstructions  String?
+  outageInstructions String?
+
   createdBy String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

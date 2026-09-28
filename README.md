@@ -492,6 +492,29 @@ Sentinel se relie à un [agent Hermes](https://hermes-agent.nousresearch.com/doc
 dans les deux sens. Tout se configure dans *Paramètres → Hermes Agent*
 (superadmin).
 
+### Connexion en une étape
+
+Dans *Paramètres → Hermes Agent → Connecter Hermes* :
+
+1. Saisir l'adresse du webhook de Hermes
+   (`http://<serveur-hermes>:8644/webhooks/sentinel`) et la messagerie où il
+   vous répond. Cocher *Autoriser les interventions* si besoin.
+2. Cliquer *Connecter Hermes* : Sentinel crée la clé MCP et le webhook, puis
+   affiche **un seul bloc** à coller dans `~/.hermes/config.yaml`.
+3. Redémarrer Hermes, puis cliquer *Tester la liaison*. Hermes reçoit le
+   test, interroge Sentinel (`sentinel_overview`) et vous répond. *État de la
+   connexion* montre les deux sens : « reçu par Hermes » et « connecté ».
+
+**Ce que fait Hermes à chaque alarme se règle dans Sentinel** (*Consignes
+envoyées à Hermes*) : chaque webhook porte un champ `instructions`, et la route
+Hermes se contente de l'afficher (`{instructions}`). Il y a deux consignes, une
+pour les alarmes et une pour les pannes d'enregistreur ; les valeurs par défaut
+suivent la procédure de diagnostic curatif. On les modifie sans toucher à
+Hermes, et elles s'appliquent dès l'envoi suivant.
+
+Relancer *Connecter Hermes* remplace la connexion : l'ancienne clé est
+révoquée, le webhook garde ses filtres et ses consignes.
+
 ### Hermes → Sentinel : serveur MCP
 
 Sentinel expose un serveur **MCP** (Model Context Protocol, transport
@@ -507,8 +530,8 @@ mcp_servers:
     timeout: 120
 ```
 
-Le bouton *Générer la clé de connexion Hermes* crée la clé et affiche ce bloc
-prêt à coller. Outils disponibles, **filtrés selon les scopes de la clé** :
+*Connecter Hermes* crée la clé et l'inclut dans le bloc à coller. Outils
+disponibles, **filtrés selon les scopes de la clé** :
 
 | Outil | Scope | Rôle |
 | --- | --- | --- |
@@ -531,7 +554,8 @@ alarme ou d'une panne jusqu'à la vérification et la main courante). *Paramètr
 
 - l'**état de la connexion** (clés Hermes, dernier appel, dernières actions de
   l'agent) ;
-- la **compétence Hermes** `sentinel-maintenance` à télécharger, à déposer dans
+- la **compétence Hermes** `sentinel-maintenance` (facultative, pour les
+  tournées préventives planifiées) à télécharger, à déposer dans
   `~/.hermes/skills/sentinel-maintenance/SKILL.md` ;
 - la phrase à adresser à Hermes pour planifier une tournée préventive hebdomadaire.
 
@@ -554,8 +578,8 @@ Sentinel pousse vers une ou plusieurs URL les événements choisis :
 
 Filtres par webhook : **criticité**, **famille** (intrusion, vidéo, entrées /
 sorties, stockage, réseau et système) et **client** — rien de coché = tout.
-Chaque corps JSON porte `event_type`, un `summary` lisible et les blocs
-`alarm`, `nvr`, `client`.
+Chaque corps JSON porte `event_type`, un `summary` lisible, les
+`instructions` pour l'agent et les blocs `alarm`, `nvr`, `client`.
 
 Format **Hermes « generic »** : `X-Webhook-Timestamp` +
 `X-Webhook-Signature-V2` (HMAC-SHA256 hexadécimal de `<timestamp>.<corps>`,
@@ -571,9 +595,10 @@ platforms:
       routes:
         sentinel:
           secret: "whsec_…"
-          events: ["alarm.created", "nvr.offline", "nvr.online", "sentinel.test"]
           prompt: |
-            Événement Sentinel : {summary}
+            {instructions}
+
+            Événement : {summary}
             Données complètes : {__raw__}
           deliver: "telegram"
 ```
