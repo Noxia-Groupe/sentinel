@@ -408,6 +408,34 @@ consommation PoE ne sont affichés que si le firmware les expose — Sentinel le
 découvre alors lui-même (`system.listMethod`) et les affiche tels quels. Le
 diagnostic *Capacités du firmware* montre ce qu'un modèle donné permet.
 
+## Consommation réseau et impact de la supervision
+
+Sentinel mesure le trafic qu'il échange avec chaque enregistreur : octets
+réellement lus et écrits sur la connexion (HTTP, RPC2, RTSP du direct), et taille
+des alarmes reçues. Chaque échange est attribué à son origine : *supervision
+automatique*, *interventions et tests* (utilisateurs), *agent* (API, Hermes),
+*direct vidéo*, *alarmes reçues*.
+
+- **Liste des enregistreurs** : colonne *Débit Sentinel*, avec le débit en cours
+  (↓ reçu, ↑ envoyé, rafraîchi toutes les 5 s) et le volume des dernières 24 h.
+  Le même débit s'affiche dans l'en-tête de la fiche.
+- **Fiche → Supervision → Consommation réseau de Sentinel** :
+  - débit en cours et pointe sur 5 min ;
+  - volumes 24 h / 7 jours par origine ;
+  - volume heure par heure (supervision / autres usages) ;
+  - coût d'une vérification de supervision (octets, requêtes, temps de
+    réponse) et projection par jour.
+- **Mesurer l'impact** (même panneau) : compare la charge processeur de
+  l'enregistreur au repos et pendant des vérifications identiques à celles de la
+  supervision, puis donne la durée et le coût réseau d'une vérification, la
+  projection par jour et par mois, et un verdict (négligeable, faible, notable).
+  Dure une quinzaine de secondes.
+- Pour les agents : outil MCP `get_nvr_traffic`, action `impact-test`.
+
+Les débits sont en bits par seconde, les volumes en octets. Les cumuls horaires
+sont conservés 90 jours. En P2P, l'encapsulation du tunnel et ses messages de
+maintien de connexion s'ajoutent au trafic mesuré.
+
 ## Direct vidéo
 
 Onglet *Direct* : **une seule caméra à la fois**, choisie dans la liste des
@@ -464,6 +492,29 @@ Sentinel se relie à un [agent Hermes](https://hermes-agent.nousresearch.com/doc
 dans les deux sens. Tout se configure dans *Paramètres → Hermes Agent*
 (superadmin).
 
+### Connexion en une étape
+
+Dans *Paramètres → Hermes Agent → Connecter Hermes* :
+
+1. Saisir l'adresse du webhook de Hermes
+   (`http://<serveur-hermes>:8644/webhooks/sentinel`) et la messagerie où il
+   vous répond. Cocher *Autoriser les interventions* si besoin.
+2. Cliquer *Connecter Hermes* : Sentinel crée la clé MCP et le webhook, puis
+   affiche **un seul bloc** à coller dans `~/.hermes/config.yaml`.
+3. Redémarrer Hermes, puis cliquer *Tester la liaison*. Hermes reçoit le
+   test, interroge Sentinel (`sentinel_overview`) et vous répond. *État de la
+   connexion* montre les deux sens : « reçu par Hermes » et « connecté ».
+
+**Ce que fait Hermes à chaque alarme se règle dans Sentinel** (*Consignes
+envoyées à Hermes*) : chaque webhook porte un champ `instructions`, et la route
+Hermes se contente de l'afficher (`{instructions}`). Il y a deux consignes, une
+pour les alarmes et une pour les pannes d'enregistreur ; les valeurs par défaut
+suivent la procédure de diagnostic curatif. On les modifie sans toucher à
+Hermes, et elles s'appliquent dès l'envoi suivant.
+
+Relancer *Connecter Hermes* remplace la connexion : l'ancienne clé est
+révoquée, le webhook garde ses filtres et ses consignes.
+
 ### Hermes → Sentinel : serveur MCP
 
 Sentinel expose un serveur **MCP** (Model Context Protocol, transport
@@ -479,8 +530,8 @@ mcp_servers:
     timeout: 120
 ```
 
-Le bouton *Générer la clé de connexion Hermes* crée la clé et affiche ce bloc
-prêt à coller. Outils disponibles, **filtrés selon les scopes de la clé** :
+*Connecter Hermes* crée la clé et l'inclut dans le bloc à coller. Outils
+disponibles, **filtrés selon les scopes de la clé** :
 
 | Outil | Scope | Rôle |
 | --- | --- | --- |
@@ -490,6 +541,7 @@ prêt à coller. Outils disponibles, **filtrés selon les scopes de la clé** :
 | `list_clients`, `list_nvrs`, `get_nvr` | `nvr:read` | Inventaire et derniers tests |
 | `test_nvr` | `nvr:test` | Test d'accès réel (IP ou P2P) et droits du compte |
 | `get_nvr_health` | `nvr:read` | Supervision : anomalies ouvertes, disponibilité, historique |
+| `get_nvr_traffic` | `nvr:read` | Débit en cours, volumes 24 h / 7 j par origine, coût d'une vérification |
 | `run_health_check` | `nvr:test` | Vérification de supervision immédiate |
 | `fleet_maintenance` | `nvr:read` | Parc à risque (anomalies, disponibilité 7 j, jamais vérifiés), sans solliciter les équipements |
 | `maintenance_report` | `nvr:test` | Bilan d'un enregistreur : constats classés et action `nvr_action` recommandée |
@@ -502,7 +554,8 @@ alarme ou d'une panne jusqu'à la vérification et la main courante). *Paramètr
 
 - l'**état de la connexion** (clés Hermes, dernier appel, dernières actions de
   l'agent) ;
-- la **compétence Hermes** `sentinel-maintenance` à télécharger, à déposer dans
+- la **compétence Hermes** `sentinel-maintenance` (facultative, pour les
+  tournées préventives planifiées) à télécharger, à déposer dans
   `~/.hermes/skills/sentinel-maintenance/SKILL.md` ;
 - la phrase à adresser à Hermes pour planifier une tournée préventive hebdomadaire.
 
@@ -525,8 +578,8 @@ Sentinel pousse vers une ou plusieurs URL les événements choisis :
 
 Filtres par webhook : **criticité**, **famille** (intrusion, vidéo, entrées /
 sorties, stockage, réseau et système) et **client** — rien de coché = tout.
-Chaque corps JSON porte `event_type`, un `summary` lisible et les blocs
-`alarm`, `nvr`, `client`.
+Chaque corps JSON porte `event_type`, un `summary` lisible, les
+`instructions` pour l'agent et les blocs `alarm`, `nvr`, `client`.
 
 Format **Hermes « generic »** : `X-Webhook-Timestamp` +
 `X-Webhook-Signature-V2` (HMAC-SHA256 hexadécimal de `<timestamp>.<corps>`,
@@ -542,9 +595,10 @@ platforms:
       routes:
         sentinel:
           secret: "whsec_…"
-          events: ["alarm.created", "nvr.offline", "nvr.online", "sentinel.test"]
           prompt: |
-            Événement Sentinel : {summary}
+            {instructions}
+
+            Événement : {summary}
             Données complètes : {__raw__}
           deliver: "telegram"
 ```

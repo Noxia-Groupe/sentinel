@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import dns from "node:dns/promises";
 import net from "node:net";
 import type { Prisma } from "@/generated/prisma/client";
+import { instructionsFor } from "./mcp/playbooks";
 import { prisma } from "./prisma";
 import { decrypt, encrypt } from "./crypto";
 import {
@@ -408,6 +409,9 @@ export async function deliver(deliveryId: string): Promise<DeliveryResult> {
       const secret = decrypt(delivery.endpoint.secretEncrypted);
       const body = JSON.stringify({
         ...(delivery.payload as Record<string, unknown>),
+        // Consigne pour l'agent, lue au moment de l'envoi : une modification
+        // dans Sentinel vaut aussi pour les envois en attente.
+        instructions: instructionsFor(delivery.eventType, delivery.endpoint),
         delivery_id: delivery.id,
         sentinel: { base_url: baseUrl(), mcp_url: `${baseUrl()}/api/mcp` },
       });

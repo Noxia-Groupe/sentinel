@@ -1,4 +1,5 @@
 import type { Actor } from "./actor";
+import { pruneTraffic, withTraffic } from "./traffic";
 import { prisma } from "./prisma";
 import { updateEvent } from "./alarm-service";
 import { emitAlarmCreated, emitNvrStatus } from "./outbound-webhooks";
@@ -262,7 +263,13 @@ export async function checkNvr(nvrId: string, settings?: SupervisionSettings): P
   const nvr = await loadNvr(nvrId);
   if (!nvr) return null;
   const config = settings ?? (await getSupervisionConfig());
-  const outcome = await probe(nvr, config.clockDriftMinutes);
+  // Coût réseau de la vérification, conservé avec son résultat.
+  const { result: outcome, usage } = await withTraffic(nvr.id, "supervision", () =>
+    probe(nvr, config.clockDriftMinutes),
+  );
+  if (usage.requests > 0) {
+    outcome.details.traffic = { bytesIn: usage.bytesIn, bytesOut: usage.bytesOut, requests: usage.requests };
+  }
 
   const previous = new Set(nvr.healthIssues as SupervisionIssue[]);
   const next = new Set(previous);
@@ -449,6 +456,7 @@ export function startSupervisionWorker(tickMs = 30_000): void {
         if (Date.now() - lastPrune > 24 * 3600_000) {
           lastPrune = Date.now();
           await pruneHealthChecks();
+          await pruneTraffic();
         }
       } catch (error) {
         console.error("[supervision] horloge", error);
@@ -511,5 +519,37 @@ export async function nvrHealth(nvrId: string, historyLimit = 50) {
       offlineThreshold: config.offlineThreshold,
     },
     checks,
+  };
+}
+
+/**
+ * Coût observé de la supervision automatique d'un enregistreur sur 24 h :
+ * nombre de vérifications, trafic et durée moyens par vérification, et
+ * projection au rythme configuré.
+ */
+export async function supervisionCost(nvrId: string) {
+  const [checks, config] = await Promise.all([
+    prisma.healthCheck.findMany({
+      where: { nvrId, createdAt: { gte: new Date(Date.now() - 24 * 3600_000) } },
+      select: { latencyMs: true, details: true, reachable: true },
+    }),
+    getSupervisionConfig(),
+  ]);
+  const measured = checks
+    .map((check) => (check.details as { traffic?: { bytesIn: number; bytesOut: number; requests: number } } | null)?.traffic)
+    .filter((traffic): traffic is { bytesIn: number; bytesOut: number; requests: number } => Boolean(traffic));
+  const latencies = checks.map((check) => check.latencyMs).filter((v): v is number => typeof v === "number");
+  const mean = (values: number[]) => (values.length ? Math.round(values.reduce((a, b) => a + b, 0) / values.length) : null);
+  const bytesPerCheck = mean(measured.map((t) => t.bytesIn + t.bytesOut));
+  const checksPerDay = config.enabled && config.intervalMinutes > 0 ? Math.floor((24 * 60) / config.intervalMinutes) : 0;
+  return {
+    enabled: config.enabled,
+    intervalMinutes: config.intervalMinutes,
+    checks24h: checks.length,
+    measuredChecks: measured.length,
+    bytesPerCheck,
+    requestsPerCheck: mean(measured.map((t) => t.requests)),
+    averageLatencyMs: mean(latencies),
+    projectedBytesPerDay: bytesPerCheck !== null ? bytesPerCheck * checksPerDay : null,
   };
 }

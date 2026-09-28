@@ -49,6 +49,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
+import { formatRate, formatVolume } from "@/lib/format-traffic";
 
 type NvrSummary = {
   id: string;
@@ -71,6 +72,16 @@ type NvrSummary = {
 };
 
 type ClientOption = { id: string; name: string };
+
+type TrafficSummary = {
+  inBps: number;
+  outBps: number;
+  active: boolean;
+  last24hBytes: number;
+};
+
+/** Rafraîchissement du débit affiché dans la liste. */
+const TRAFFIC_REFRESH_MS = 5_000;
 
 const statusLabel: Record<string, string> = {
   online: "En ligne",
@@ -118,6 +129,24 @@ export function NvrsClient() {
   useEffect(() => {
     void fetchNvrs();
   }, [fetchNvrs]);
+
+  // Débit échangé par Sentinel avec chaque enregistreur, mis à jour en continu
+  // tant que la page est visible.
+  const [traffic, setTraffic] = useState<Record<string, TrafficSummary>>({});
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      if (document.visibilityState !== "visible") return;
+      const res = await fetch("/api/nvrs/traffic", { cache: "no-store" }).catch(() => null);
+      if (res?.ok && !cancelled) setTraffic(await res.json());
+    };
+    void load();
+    const timer = setInterval(() => void load(), TRAFFIC_REFRESH_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, []);
 
   useEffect(() => {
     void (async () => {
@@ -425,6 +454,9 @@ export function NvrsClient() {
                 <TableHead className="text-[#8896b4] font-medium">Adresse</TableHead>
                 <TableHead className="text-[#8896b4] font-medium">Alarmes</TableHead>
                 <TableHead className="text-[#8896b4] font-medium">Statut</TableHead>
+                <TableHead className="text-[#8896b4] font-medium" title="Trafic échangé par Sentinel avec l'enregistreur">
+                  Débit Sentinel
+                </TableHead>
                 <TableHead className="text-[#8896b4] font-medium w-12"></TableHead>
               </TableRow>
             </TableHeader>
@@ -437,12 +469,13 @@ export function NvrsClient() {
                     <TableCell><Skeleton className="h-5 w-24 bg-[#132255]" /></TableCell>
                     <TableCell><Skeleton className="h-5 w-10 bg-[#132255]" /></TableCell>
                     <TableCell><Skeleton className="h-5 w-16 bg-[#132255]" /></TableCell>
+                    <TableCell><Skeleton className="h-5 w-20 bg-[#132255]" /></TableCell>
                     <TableCell><Skeleton className="h-8 w-8 bg-[#132255]" /></TableCell>
                   </TableRow>
                 ))
               ) : filtered.length === 0 ? (
                 <TableRow className="border-[#132255]">
-                  <TableCell colSpan={6} className="text-center py-16 text-[#8896b4]">
+                  <TableCell colSpan={7} className="text-center py-16 text-[#8896b4]">
                     <Server className="h-10 w-10 mx-auto mb-3 opacity-20" />
                     <p className="text-sm">{search ? "Aucun résultat" : "Aucun enregistreur"}</p>
                     <p className="text-xs mt-1 text-[#8896b4]/60">
@@ -490,6 +523,9 @@ export function NvrsClient() {
                       >
                         {statusLabel[nvr.status] || nvr.status}
                       </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <TrafficCell traffic={traffic[nvr.id]} />
                     </TableCell>
                     <TableCell onClick={(e) => e.stopPropagation()}>
                       <DropdownMenu>
@@ -566,4 +602,28 @@ async function testConnection(nvrId: string, refresh: () => Promise<void>) {
     toast.dismiss(pending);
     toast.error("Le test n'a pas pu être lancé");
   }
+}
+
+/** Débit en cours (descendant / montant) et volume des dernières 24 h. */
+function TrafficCell({ traffic }: { traffic?: TrafficSummary }) {
+  if (!traffic) return <span className="text-[#8896b4] text-sm">—</span>;
+  return (
+    <div className="leading-tight">
+      {traffic.active ? (
+        <span className="flex items-center gap-1.5 text-sm text-[#dde1e4] whitespace-nowrap">
+          <span className="relative flex h-2 w-2">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#4d9fe8] opacity-60" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-[#4d9fe8]" />
+          </span>
+          <span title="Reçu de l'enregistreur">↓ {formatRate(traffic.inBps)}</span>
+          <span className="text-[#8896b4]" title="Envoyé à l'enregistreur">
+            ↑ {formatRate(traffic.outBps)}
+          </span>
+        </span>
+      ) : (
+        <span className="text-sm text-[#8896b4]">au repos</span>
+      )}
+      <span className="block text-[11px] text-[#8896b4]">24 h : {formatVolume(traffic.last24hBytes)}</span>
+    </div>
+  );
 }

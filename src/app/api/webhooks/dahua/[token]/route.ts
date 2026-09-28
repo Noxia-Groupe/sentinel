@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { normalizeEvent } from "@/lib/dahua/events";
 import { emitAlarmCreated, emitNvrStatus } from "@/lib/outbound-webhooks";
+import { recordTraffic } from "@/lib/traffic";
 
 /**
  * Réception des événements Alarm Center.
@@ -29,7 +30,34 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ token: str
   return handle(req, ctx);
 }
 
-async function handle(req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
+/**
+ * Trafic d'une alarme reçue, imputé à l'enregistreur (origine « alarmes ») :
+ * ligne de requête, en-têtes et corps reçus, plus la réponse renvoyée.
+ * Estimation au niveau HTTP : le chiffrement TLS s'y ajoute.
+ */
+function countAlarmTraffic(req: NextRequest, nvrId: string, bodyBytes: number, response: NextResponse) {
+  let headerBytes = 0;
+  req.headers.forEach((value, key) => {
+    headerBytes += key.length + value.length + 4;
+  });
+  const url = new URL(req.url);
+  const received = req.method.length + url.pathname.length + url.search.length + 12 + headerBytes + bodyBytes;
+  // Réponse : ligne de statut et en-têtes usuels (~150 o) + corps JSON.
+  const sent = 150 + Number(response.headers.get("content-length") ?? 60);
+  recordTraffic(received, sent, { nvrId, origin: "alarmes" });
+  return response;
+}
+
+async function handle(req: NextRequest, ctx: { params: Promise<{ token: string }> }) {
+  const outcome = await receive(req, ctx);
+  if (outcome.nvrId) countAlarmTraffic(req, outcome.nvrId, outcome.bodyBytes, outcome.response);
+  return outcome.response;
+}
+
+async function receive(
+  req: NextRequest,
+  { params }: { params: Promise<{ token: string }> },
+): Promise<{ response: NextResponse; nvrId?: string; bodyBytes: number }> {
   const { token } = await params;
 
   const nvr = await prisma.nvr.findUnique({
@@ -38,10 +66,11 @@ async function handle(req: NextRequest, { params }: { params: Promise<{ token: s
   });
 
   if (!nvr) {
-    return NextResponse.json({ error: "NVR non trouvé" }, { status: 404 });
+    return { response: NextResponse.json({ error: "NVR non trouvé" }, { status: 404 }), bodyBytes: 0 };
   }
 
-  const payload = await readPayload(req);
+  const { payload, bodyBytes } = await readPayload(req);
+  const reply = (response: NextResponse) => ({ response, nvrId: nvr.id, bodyBytes });
   const normalized = normalizeEvent(payload);
 
   // Toute réception vaut preuve de vie, y compris un simple battement de cœur.
@@ -54,7 +83,7 @@ async function handle(req: NextRequest, { params }: { params: Promise<{ token: s
   }
 
   if (HEARTBEAT_TYPES.has(normalized.type.toLowerCase())) {
-    return NextResponse.json({ success: true, stored: false, reason: "heartbeat" });
+    return reply(NextResponse.json({ success: true, stored: false, reason: "heartbeat" }));
   }
 
   const since = new Date(Date.now() - DEDUPE_WINDOW_MS);
@@ -78,7 +107,7 @@ async function handle(req: NextRequest, { params }: { params: Promise<{ token: s
       where: { id: recent.id },
       data: { receivedAt: new Date(), payload: payload as object },
     });
-    return NextResponse.json({ success: true, stored: false, reason: "deduplicated", eventId: recent.id });
+    return reply(NextResponse.json({ success: true, stored: false, reason: "deduplicated", eventId: recent.id }));
   }
 
   const event = await prisma.nvrEvent.create({
@@ -98,17 +127,21 @@ async function handle(req: NextRequest, { params }: { params: Promise<{ token: s
   // Relais vers les webhooks sortants (agent Hermes…), sans retarder la réponse.
   void emitAlarmCreated(event.id);
 
-  return NextResponse.json({ success: true, stored: true, event });
+  return reply(NextResponse.json({ success: true, stored: true, event }));
 }
 
-/** Fusionne les paramètres d'URL et le corps de la requête en un seul objet. */
-async function readPayload(req: NextRequest): Promise<Record<string, unknown>> {
+/** Lit le corps et le fusionne avec les paramètres d'URL en un seul objet. */
+async function readPayload(req: NextRequest): Promise<{ payload: Record<string, unknown>; bodyBytes: number }> {
+  const raw = req.method === "GET" ? "" : await req.text();
+  return { payload: parsePayload(req, raw), bodyBytes: Buffer.byteLength(raw) };
+}
+
+function parsePayload(req: NextRequest, raw: string): Record<string, unknown> {
   const query = Object.fromEntries(new URL(req.url).searchParams.entries());
 
   if (req.method === "GET") return query;
 
   const contentType = req.headers.get("content-type") ?? "";
-  const raw = await req.text();
 
   if (!raw) return query;
 

@@ -1,9 +1,10 @@
 /**
  * Procédures de maintenance destinées aux agents (Hermes Agent…).
  *
- * Une seule source pour les trois usages : les « prompts » du serveur MCP
+ * Une seule source pour tous les usages : les « prompts » du serveur MCP
  * (que l'agent peut appeler par leur nom), la compétence Hermes téléchargeable
- * depuis Paramètres, et les instructions du serveur. Module sans dépendance :
+ * depuis Paramètres, les instructions du serveur, les consignes jointes aux
+ * webhooks et le bloc de configuration Hermes. Module sans dépendance :
  * importable côté serveur comme côté navigateur.
  */
 
@@ -128,3 +129,77 @@ enregistreurs (IP ou P2P) : aucun mot de passe n'est nécessaire côté agent.
  */
 export const HERMES_SCHEDULE_REQUEST =
   "Chaque lundi à 7 h, utilise la compétence sentinel-maintenance pour faire la maintenance préventive du parc Sentinel, puis envoie-moi le rapport.";
+
+// ---------------------------------------------------------------------------
+// Consignes transmises avec chaque webhook (champ `instructions`)
+// ---------------------------------------------------------------------------
+
+/** Ce que l'agent fait en recevant une nouvelle alarme (modifiable par webhook). */
+export const DEFAULT_ALARM_INSTRUCTIONS = `Nouvelle alarme Sentinel. Traite-la ainsi :
+1. Lis-la avec get_alarm (identifiant : alarm.id).
+2. Vérifie l'enregistreur : test_nvr, puis nvr_action snapshot sur le canal de l'alarme si une image aide à comprendre.
+3. Si c'est une panne technique (perte vidéo, disque, horloge, sabotage…), fais un diagnostic : maintenance_report, puis applique l'action recommandée seulement si elle est sûre (remise à l'heure, relance d'une caméra par son port PoE).
+4. Note ton analyse dans la main courante (update_alarm avec comment) et passe l'alarme en « acknowledged » ; ne la clôture (resolved) que si le problème est réellement levé.
+5. Préviens-moi en 3 lignes : quoi, où (client, site, caméra), ce que tu as fait.
+Ne redémarre jamais un enregistreur sans mon accord.`;
+
+/** Ce que l'agent fait quand un enregistreur tombe en panne ou revient. */
+export const DEFAULT_OUTAGE_INSTRUCTIONS = `Changement d'état d'un enregistreur supervisé par Sentinel.
+- S'il est hors ligne : confirme avec get_nvr_health puis test_nvr ; cherche la cause probable (coupure du site, accès internet, tunnel P2P). Aucune action à distance n'est possible tant qu'il est injoignable : préviens-moi avec le client, le site et depuis quand.
+- S'il est revenu en ligne : lance maintenance_report pour vérifier que tout est reparti (disques, caméras, horloge) et résume-moi le résultat.`;
+
+/** Test de liaison : l'agent prouve qu'il sait aussi joindre Sentinel (MCP). */
+export const TEST_INSTRUCTIONS = `Test de liaison envoyé depuis Sentinel. Appelle l'outil sentinel_overview du serveur MCP « sentinel » et réponds en une phrase : « Liaison Sentinel OK — N alarme(s) ouverte(s), N enregistreur(s) en ligne sur N ». Si l'outil n'est pas disponible, dis-le clairement.`;
+
+export type InstructionSet = { alarmInstructions?: string | null; outageInstructions?: string | null };
+
+/** Consignes à joindre à un envoi, selon le type d'événement. */
+export function instructionsFor(eventType: string, endpoint: InstructionSet): string {
+  if (eventType === "sentinel.test") return TEST_INSTRUCTIONS;
+  if (eventType === "nvr.offline" || eventType === "nvr.online") {
+    return endpoint.outageInstructions?.trim() || DEFAULT_OUTAGE_INSTRUCTIONS;
+  }
+  return endpoint.alarmInstructions?.trim() || DEFAULT_ALARM_INSTRUCTIONS;
+}
+
+// ---------------------------------------------------------------------------
+// Configuration Hermes : un seul bloc à coller
+// ---------------------------------------------------------------------------
+
+/**
+ * Bloc `~/.hermes/config.yaml` complet : serveur MCP (Hermes → Sentinel) et,
+ * si un secret de webhook est fourni, la route qui reçoit les alarmes
+ * (Sentinel → Hermes). La consigne est fournie par Sentinel dans chaque envoi
+ * (`{instructions}`) : on la modifie dans Sentinel, sans retoucher Hermes.
+ */
+export function hermesConfigBlock(options: {
+  origin: string;
+  mcpKey: string;
+  webhookSecret?: string;
+  deliver?: string;
+}): string {
+  const mcp = `mcp_servers:
+  sentinel:
+    url: "${options.origin}/api/mcp"
+    headers:
+      Authorization: "Bearer ${options.mcpKey}"
+    timeout: 120          # un test via tunnel P2P peut prendre ~30 s
+    connect_timeout: 30`;
+  if (!options.webhookSecret) return `# ~/.hermes/config.yaml — sur le serveur Hermes\n${mcp}`;
+  return `# ~/.hermes/config.yaml — sur le serveur Hermes
+${mcp}
+
+platforms:
+  webhook:
+    enabled: true
+    extra:
+      routes:
+        sentinel:
+          secret: "${options.webhookSecret}"
+          prompt: |
+            {instructions}
+
+            Événement : {summary}
+            Données complètes : {__raw__}
+          deliver: "${options.deliver ?? "telegram"}"   # où Hermes vous répond : telegram, discord, slack…`;
+}

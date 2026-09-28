@@ -73,6 +73,8 @@ export async function POST(req: NextRequest) {
       clientIds: settings.clientIds ?? [],
       notifyStatusChanges: settings.notifyStatusChanges ?? false,
       notifyNvrStatus: settings.notifyNvrStatus ?? true,
+      alarmInstructions: settings.alarmInstructions ?? null,
+      outageInstructions: settings.outageInstructions ?? null,
       createdBy: guard.email,
     },
   });

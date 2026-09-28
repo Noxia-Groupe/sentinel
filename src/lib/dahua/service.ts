@@ -4,6 +4,7 @@ import { decrypt } from "@/lib/crypto";
 import { recordAudit } from "@/lib/audit";
 import { emitNvrStatus } from "@/lib/outbound-webhooks";
 import type { Actor } from "@/lib/actor";
+import { originForActor, trafficScope } from "@/lib/traffic";
 import { DahuaError, type DahuaFailureReason, type DahuaTarget } from "./http";
 import { isP2pAvailable, openTunnel } from "./p2p";
 import {
@@ -140,6 +141,16 @@ export async function loadNvr(nvrId: string): Promise<NvrWithCredentials | null>
  * compte utilisé, que le test réussisse ou non.
  */
 export async function testNvrConnection(options: {
+  nvr: NvrWithCredentials;
+  credentialId?: string | null;
+  includeRights?: boolean;
+  actor: Actor;
+}): Promise<ConnectionTestResult> {
+  // Trafic imputé à l'auteur du test (utilisateur, agent ou supervision).
+  return trafficScope(options.nvr.id, originForActor(options.actor), () => runConnectionTest(options));
+}
+
+async function runConnectionTest(options: {
   nvr: NvrWithCredentials;
   credentialId?: string | null;
   includeRights?: boolean;
@@ -325,6 +336,17 @@ export async function testAllCredentials(options: {
  * compte enregistré, en journalisant systématiquement le résultat.
  */
 export async function runNvrAction<T>(options: {
+  nvr: NvrWithCredentials;
+  credentialId?: string | null;
+  action: string;
+  actor: Actor;
+  metadata?: Record<string, unknown>;
+  run: (target: DahuaTarget) => Promise<T>;
+}): Promise<{ ok: true; data: T } | { ok: false; reason: DahuaFailureReason; message: string }> {
+  return trafficScope(options.nvr.id, originForActor(options.actor), () => executeWithCredential(options));
+}
+
+async function executeWithCredential<T>(options: {
   nvr: NvrWithCredentials;
   credentialId?: string | null;
   action: string;

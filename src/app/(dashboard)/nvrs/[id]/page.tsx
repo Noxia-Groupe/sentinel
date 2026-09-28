@@ -57,6 +57,7 @@ import { SeverityBadge, StatusBadge } from "@/components/alarm-badges";
 import { ActionResult } from "./action-result";
 import { SupervisionPanel } from "./supervision-panel";
 import { LivePanel } from "./live-panel";
+import { LiveTrafficBadge, TrafficPanel } from "./traffic-panel";
 
 type Rights = {
   available: boolean;
@@ -331,6 +332,7 @@ export default function NvrDetailPage() {
           >
             {nvr.status === "online" ? "En ligne" : nvr.status === "offline" ? "Hors ligne" : "Inconnu"}
           </Badge>
+          <LiveTrafficBadge nvrId={nvrId} />
           <Button
             variant="outline"
             onClick={() => setEditOpen(true)}
@@ -690,8 +692,9 @@ export default function NvrDetailPage() {
         </TabsContent>
 
         {/* Supervision permanente */}
-        <TabsContent value="supervision">
+        <TabsContent value="supervision" className="space-y-6">
           <SupervisionPanel nvrId={nvrId} onChange={fetchNvr} />
+          <TrafficPanel nvrId={nvrId} disabled={unreachable} />
         </TabsContent>
 
         {/* Alarmes */}

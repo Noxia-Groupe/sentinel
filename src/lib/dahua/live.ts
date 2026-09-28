@@ -1,10 +1,12 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
+import net from "node:net";
 import os from "node:os";
 import type { Nvr, NvrCredential } from "@/generated/prisma/client";
 import { decrypt } from "@/lib/crypto";
 import { DahuaError } from "./http";
 import { openTunnel } from "./p2p";
+import { recordTraffic } from "@/lib/traffic";
 
 /**
  * Vidéo en direct : une seule caméra à la fois, flux SECONDAIRE uniquement
@@ -72,6 +74,44 @@ function describeFfmpegFailure(stderr: string): DahuaError {
   return new DahuaError("http", `Flux vidéo indisponible${text ? ` : ${text.slice(0, 300)}` : ""}`);
 }
 
+/**
+ * Relais TCP local entre ffmpeg et le port RTSP : il compte les octets du
+ * direct (imputés à l'origine « direct ») sans rien modifier au flux.
+ */
+function countingRelay(nvrId: string, host: string, port: number): Promise<{ port: number; close: () => void }> {
+  const sockets = new Set<net.Socket>();
+  const target = { nvrId, origin: "direct" as const };
+  const server = net.createServer((client) => {
+    const upstream = net.connect({ host, port });
+    sockets.add(client).add(upstream);
+    recordTraffic(0, 0, target, 1);
+    client.on("data", (chunk: Buffer) => recordTraffic(0, chunk.length, target, 0));
+    upstream.on("data", (chunk: Buffer) => recordTraffic(chunk.length, 0, target, 0));
+    client.pipe(upstream).pipe(client);
+    const close = () => {
+      client.destroy();
+      upstream.destroy();
+      sockets.delete(client);
+      sockets.delete(upstream);
+    };
+    client.on("error", close).on("close", close);
+    upstream.on("error", close).on("close", close);
+  });
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address() as net.AddressInfo;
+      resolve({
+        port: address.port,
+        close: () => {
+          for (const socket of sockets) socket.destroy();
+          server.close();
+        },
+      });
+    });
+  });
+}
+
 export async function openLiveStream(options: {
   nvr: Nvr;
   credential: NvrCredential;
@@ -107,10 +147,24 @@ export async function openLiveStream(options: {
     port = nvr.rtspPort;
   }
 
+  // Tout le flux passe par le relais de comptage.
+  let relay: { port: number; close: () => void };
+  try {
+    relay = await countingRelay(nvr.id, host, port);
+  } catch (error) {
+    release();
+    throw error;
+  }
+  const releaseTunnel = release;
+  release = () => {
+    relay.close();
+    releaseTunnel();
+  };
+
   const dir = await fs.mkdtemp(`${os.tmpdir()}/sentinel-live-`);
   const source = `${dir}/source.ffconcat`;
   const url =
-    `rtsp://${encodeURIComponent(username)}:${encodeURIComponent(password)}@${host}:${port}` +
+    `rtsp://${encodeURIComponent(username)}:${encodeURIComponent(password)}@127.0.0.1:${relay.port}` +
     `/cam/realmonitor?channel=${channel}&subtype=1`;
   await fs.writeFile(
     source,

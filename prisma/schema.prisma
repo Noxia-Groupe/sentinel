@@ -152,6 +152,7 @@ model Nvr {
   events       NvrEvent[]
   checks       ConnectionCheck[]
   healthChecks HealthCheck[]
+  traffic      NvrTraffic[]
 
   @@index([clientId])
   @@index([status])
@@ -336,6 +337,11 @@ model WebhookEndpoint {
   notifyStatusChanges Boolean @default(false) // alarm.status_changed
   notifyNvrStatus     Boolean @default(true) // nvr.offline / nvr.online
 
+  // Consignes transmises à l'agent dans chaque envoi (champ `instructions`) :
+  // ce qu'il doit faire en recevant une alarme, une panne. Vide = consignes par défaut.
+  alarmInstructions  String?
+  outageInstructions String?
+
   createdBy String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -395,4 +401,22 @@ model SupervisionConfig {
   lastRunDurationMs Int?
   lastRunChecked    Int?
   updatedAt         DateTime  @updatedAt
+}
+
+// Trafic réseau entre Sentinel et un enregistreur : cumul horaire par origine
+// (supervision, interventions, agent, direct, alarmes). Voir src/lib/traffic.ts.
+model NvrTraffic {
+  id       String   @id @default(cuid())
+  nvrId    String
+  nvr      Nvr      @relation(fields: [nvrId], references: [id], onDelete: Cascade)
+  // Début de l'heure (UTC)
+  bucket   DateTime
+  origin   String
+  // Octets reçus de l'enregistreur / envoyés à l'enregistreur
+  bytesIn  BigInt   @default(0)
+  bytesOut BigInt   @default(0)
+  requests Int      @default(0)
+
+  @@unique([nvrId, bucket, origin])
+  @@index([bucket])
 }
