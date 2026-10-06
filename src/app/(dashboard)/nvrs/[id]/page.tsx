@@ -58,6 +58,7 @@ import { ActionResult } from "./action-result";
 import { SupervisionPanel } from "./supervision-panel";
 import { LivePanel } from "./live-panel";
 import { LiveTrafficBadge, TrafficPanel } from "./traffic-panel";
+import { P2pDiagnosticButton } from "./p2p-diagnostic";
 
 type Rights = {
   available: boolean;
@@ -333,6 +334,7 @@ export default function NvrDetailPage() {
             {nvr.status === "online" ? "En ligne" : nvr.status === "offline" ? "Hors ligne" : "Inconnu"}
           </Badge>
           <LiveTrafficBadge nvrId={nvrId} />
+          {isP2p && <P2pDiagnosticButton nvrId={nvrId} />}
           <Button
             variant="outline"
             onClick={() => setEditOpen(true)}

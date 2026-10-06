@@ -391,14 +391,38 @@ export function isCycleRunning(): boolean {
 }
 
 /** Vérifie tous les enregistreurs surveillés. Une seule tournée à la fois. */
+/** Plafond d'espacement des vérifications d'un enregistreur injoignable. */
+const MAX_RECHECK_MS = 60 * 60_000;
+
+/**
+ * Délai avant de revérifier un enregistreur : l'intervalle normal tant qu'il
+ * répond, puis doublé à chaque échec au-delà du seuil d'injoignabilité
+ * (5 → 10 → 20 → 40 → 60 min avec les réglages par défaut).
+ */
+export function recheckDelayMs(config: SupervisionSettings, consecutiveFailures: number): number {
+  const base = config.intervalMinutes * 60_000;
+  const extra = consecutiveFailures - config.offlineThreshold;
+  if (extra < 0) return base;
+  return Math.min(base * 2 ** (extra + 1), Math.max(MAX_RECHECK_MS, base));
+}
+
 export async function runSupervisionCycle(): Promise<{ checked: number; durationMs: number } | null> {
   if (cycleRunning) return null;
   cycleRunning = true;
   const startedAt = Date.now();
   try {
     const config = await getSupervisionConfig();
-    const nvrs = await prisma.nvr.findMany({ where: { monitored: true }, select: { id: true } });
-    const queue = [...nvrs];
+    const nvrs = await prisma.nvr.findMany({
+      where: { monitored: true },
+      select: { id: true, consecutiveFailures: true, lastHealthCheckAt: true },
+    });
+    // Un enregistreur déjà déclaré injoignable est revérifié de moins en moins
+    // souvent : inutile de solliciter le cloud Dahua toutes les 5 min pendant
+    // une coupure. Une alarme reçue de lui le remet en ligne sans attendre.
+    const queue = nvrs.filter((nvr) => {
+      const delay = recheckDelayMs(config, nvr.consecutiveFailures);
+      return !nvr.lastHealthCheckAt || Date.now() - nvr.lastHealthCheckAt.getTime() >= delay - 30_000;
+    });
     let checked = 0;
     await Promise.all(
       Array.from({ length: Math.min(CYCLE_CONCURRENCY, queue.length) }, async () => {

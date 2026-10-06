@@ -261,10 +261,23 @@ session cloud.
 **Profil applicatif.** Dahua utilise des serveurs cloud distincts selon
 l'application d'enrôlement. `DAHUA_P2P_PROFILE` sélectionne le dialecte :
 `smartpss` (défaut, cloud easy4ip — équipement enregistré via **SmartPSS**) ou
-`dmss` (cloud Dolynk — enrôlé via l'application **DMSS**). Un mauvais profil fait
-répondre le cloud par un **404** : SENTINEL bascule alors automatiquement sur
-l'autre profil et retient, pour chaque NVR, celui qui a fonctionné. La variable
-ne fixe donc que le profil essayé en premier.
+`dmss` (cloud Dolynk — enrôlé via l'application **DMSS**). Un mauvais profil se
+traduit soit par un **404** du cloud, soit par un **silence** de l'enregistreur :
+il est bien trouvé, mais il ignore la demande de canal faite sous l'autre
+identité (« p2p-channel ack timeout »). Dans les deux cas, SENTINEL bascule
+automatiquement sur l'autre profil et retient, pour chaque NVR, celui qui a
+fonctionné. La variable ne fixe donc que le profil essayé en premier.
+
+**Diagnostic P2P.** Sur la fiche d'un enregistreur en P2P, le bouton
+*Diagnostic P2P* teste les deux clouds : présence de l'équipement, version P2P,
+puis tentative réelle de tunnel avec le journal de l'utilitaire. Le profil qui
+fonctionne est retenu, et *Copier le rapport* donne un texte à transmettre au
+support. Les valeurs sensibles (sel d'authentification) y sont masquées.
+
+**Enregistreur injoignable.** Une fois un enregistreur déclaré injoignable, la
+supervision espace ses vérifications (10, 20, 40 puis 60 min au plus avec les
+réglages par défaut), pour ne pas solliciter le cloud Dahua pendant une
+coupure. Une alarme reçue de lui le remet aussitôt en ligne.
 
 **Authentification post-2024.** Les firmwares récents exigent un canal
 authentifié : sans le bon dialecte, ils répondent `403 DevPwd_InvalidNonce` /

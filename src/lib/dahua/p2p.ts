@@ -41,8 +41,15 @@ const HELPER_COMMAND =
 /** Durée d'inactivité au bout de laquelle le tunnel est refermé. */
 const IDLE_MS = Number(process.env.DAHUA_P2P_IDLE_MS ?? 120_000);
 
-/** Délai laissé à l'utilitaire pour établir le tunnel. */
-const READY_TIMEOUT_MS = Number(process.env.DAHUA_P2P_READY_TIMEOUT_MS ?? 20_000);
+/**
+ * Délai laissé à l'utilitaire pour établir le tunnel, par profil.
+ *
+ * Une tentative `dh-fwd` dure jusqu'à ~18 s quand l'enregistreur tarde à
+ * répondre (15 s d'attente de son accusé de réception). Deux profils × 25 s
+ * restent sous les 60 s qu'accorde par défaut un reverse proxy (Nginx Proxy
+ * Manager) à une requête.
+ */
+const READY_TIMEOUT_MS = Number(process.env.DAHUA_P2P_READY_TIMEOUT_MS ?? 25_000);
 
 /**
  * Nombre de tentatives d'établissement du tunnel.
@@ -136,9 +143,14 @@ function tunnelKey(serial: string, devicePort: number): string {
 /**
  * Profils applicatifs de `dh-fwd` : chaque cloud Dahua ne connaît que les
  * équipements enrôlés par son application — SmartPSS (easy4ip) ou DMSS
- * (Dolynk). Interroger le mauvais cloud se solde par un 404.
+ * (Dolynk). Interroger le mauvais cloud se solde par un 404 ; pire, un
+ * équipement associé à DMSS peut être trouvé par le cloud SmartPSS mais
+ * ignorer silencieusement sa demande de canal (il ne répond qu'à l'identité
+ * DMSS) : d'où l'essai de l'autre profil sur tout échec de négociation.
  */
-const P2P_PROFILES = ["smartpss", "dmss"] as const;
+export const P2P_PROFILES = ["smartpss", "dmss"] as const;
+
+export const PROFILE_LABELS: Record<string, string> = { smartpss: "SmartPSS", dmss: "DMSS" };
 
 /** Profil qui a réussi pour chaque numéro de série, pour ne pas re-tâtonner. */
 const workingProfile = new Map<string, string>();
@@ -154,33 +166,45 @@ function profileOrder(serial: string): string[] {
   return known ? [first, ...P2P_PROFILES.filter((p) => p !== first)] : [first];
 }
 
-/** Échec typique d'un équipement interrogé sur le mauvais cloud. */
-function isWrongCloud(error: unknown): boolean {
-  return (
-    error instanceof DahuaError &&
-    /404 Not Found|not found on p2psrv|doesn't exist/i.test(error.message)
-  );
+/** Erreur de configuration locale : inutile d'essayer un autre profil. */
+function isLocalFailure(error: unknown): boolean {
+  return error instanceof DahuaError && error.reason === "invalid";
 }
 
-/** Établit le tunnel en essayant l'autre profil si le cloud répond 404. */
+/**
+ * Établit le tunnel en essayant l'autre profil sur tout échec de négociation
+ * (cloud qui ne connaît pas l'équipement, équipement muet, accès refusé).
+ * Le message final récapitule l'échec de chaque profil.
+ */
 async function establishWithProfiles(options: {
   serial: string;
   devicePort: number;
   username: string;
   password: string;
 }): Promise<TunnelHandle> {
-  let lastError: unknown;
+  const failures: { profile: string; error: unknown }[] = [];
   for (const profile of profileOrder(options.serial)) {
     try {
       const handle = await establishTunnel(options, profile);
       workingProfile.set(options.serial, profile);
       return handle;
     } catch (error) {
-      lastError = error;
-      if (!isWrongCloud(error)) throw error;
+      if (isLocalFailure(error)) throw error;
+      failures.push({ profile, error });
     }
   }
-  throw lastError;
+  if (failures.length === 1) throw failures[0].error;
+  // Tous les profils refusent l'accès : c'est bien une affaire d'identifiants.
+  const allAuth = failures.every((f) => f.error instanceof DahuaError && f.error.reason === "auth");
+  throw new DahuaError(
+    allAuth ? "auth" : "unreachable",
+    failures
+      .map(({ profile, error }) => {
+        const message = error instanceof Error ? error.message : String(error);
+        return `[${PROFILE_LABELS[profile] ?? profile}] ${message}`;
+      })
+      .join(" ⟶ "),
+  );
 }
 
 /**
@@ -242,9 +266,12 @@ async function waitForReady(port: number, timeoutMs: number, tunnel: Tunnel): Pr
 
   while (Date.now() < deadline) {
     if (tunnel.child.exitCode !== null || tunnel.child.signalCode !== null) {
+      const authRefused = /authentication failed|requires authentication/i.test(tunnel.output.join(" "));
       throw new DahuaError(
-        "unreachable",
-        `L'utilitaire P2P s'est arrêté avant d'établir le tunnel${describeOutput(tunnel)}`,
+        authRefused ? "auth" : "unreachable",
+        authRefused
+          ? `Accès refusé par l'enregistreur sur le canal P2P (identifiants ou sel d'authentification)${describeOutput(tunnel)}`
+          : `L'utilitaire P2P s'est arrêté avant d'établir le tunnel${describeOutput(tunnel)}`,
       );
     }
 
@@ -259,9 +286,11 @@ async function waitForReady(port: number, timeoutMs: number, tunnel: Tunnel): Pr
 
   throw new DahuaError(
     "unreachable",
-    `Tunnel P2P non établi après ${Math.round(timeoutMs / 1000)} s — ` +
-      `l'enregistreur est peut-être hors ligne sur le cloud Dahua, ` +
-      `ou exige une authentification sur le canal P2P${describeOutput(tunnel)}`,
+    `Tunnel P2P non établi après ${Math.round(timeoutMs / 1000)} s` +
+      (/ack timeout|read device response/i.test(tunnel.output.join(" "))
+        ? " — le cloud a relayé la demande mais l'enregistreur n'a pas répondu"
+        : " — l'enregistreur est peut-être hors ligne sur le cloud Dahua") +
+      describeOutput(tunnel),
   );
 }
 
@@ -327,12 +356,17 @@ export async function openTunnel(options: {
   // configuration (binaire introuvable) ni une authentification refusée.
   let lastError: unknown;
   for (let attempt = 1; attempt <= CONNECT_ATTEMPTS; attempt++) {
+    const startedAt = Date.now();
     try {
       return await establishWithProfiles(options);
     } catch (error) {
       lastError = error;
       const reason = error instanceof DahuaError ? error.reason : undefined;
       if (reason === "invalid" || reason === "auth" || reason === "forbidden") break;
+      // Un tour qui a épuisé le délai d'attente (équipement muet) ne se
+      // rattrape pas en recommençant aussitôt : on ne relance qu'après des
+      // échecs rapides (nœud du cloud indisponible, utilitaire arrêté).
+      if (Date.now() - startedAt >= READY_TIMEOUT_MS) break;
       if (attempt < CONNECT_ATTEMPTS) {
         await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
       }
@@ -350,6 +384,7 @@ async function establishTunnel(
     password: string;
   },
   profile: string,
+  timeoutMs = READY_TIMEOUT_MS,
 ): Promise<TunnelHandle> {
   const port = await allocatePort();
   const values = {
@@ -410,13 +445,15 @@ async function establishTunnel(
     if (tunnels.get(tunnel.key) === tunnel) tunnels.delete(tunnel.key);
   });
 
-  tunnel.ready = waitForReady(port, READY_TIMEOUT_MS, tunnel);
+  tunnel.ready = waitForReady(port, timeoutMs, tunnel);
   tunnels.set(tunnel.key, tunnel);
 
   try {
     await tunnel.ready;
   } catch (error) {
     closeTunnel(tunnel);
+    // Journal complet de l'utilitaire, pour le diagnostic P2P.
+    if (error instanceof DahuaError) (error as DahuaError & { p2pOutput?: string }).p2pOutput = tunnel.output.join("\n");
     throw error;
   }
 
@@ -461,4 +498,120 @@ export function closeAllTunnels(): void {
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, () => closeAllTunnels());
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostic
+// ---------------------------------------------------------------------------
+
+/** Le diagnostic laisse à l'utilitaire le temps de sa deuxième tentative interne. */
+const DIAGNOSTIC_TIMEOUT_MS = 45_000;
+
+export type P2pProfileDiagnostic = {
+  profile: string;
+  label: string;
+  /** Le cloud de ce profil connaît-il l'équipement (et le dit en ligne) ? */
+  cloud: { known: boolean | null; devP2PVersion: string | null; deviceVersion: string | null; output: string };
+  tunnel: { ok: boolean; durationMs: number; error: string | null; output: string } | null;
+};
+
+/** Masque les valeurs sensibles d'une sortie de l'utilitaire (sel, jetons). */
+function redact(text: string): string {
+  return text
+    .replace(/(randsalt\s*[:=]\s*)\S+/gi, "$1[masqué]")
+    .replace(/("?(?:token|nonce|password|pwd)"?\s*[:=]\s*)"?[^\s",}]+/gi, "$1[masqué]");
+}
+
+/** `dh-fwd <SN> --info --app <profil>` : présence de l'équipement sur un cloud, sans identifiants. */
+function probeCloud(serial: string, profile: string): Promise<P2pProfileDiagnostic["cloud"]> {
+  const binary = tokenize(HELPER_COMMAND)[0];
+  return new Promise((resolve) => {
+    if (!binary) {
+      resolve({ known: null, devP2PVersion: null, deviceVersion: null, output: "utilitaire P2P non configuré" });
+      return;
+    }
+    // Aucun identifiant dans l'environnement : la requête d'information n'en a pas besoin.
+    const env = { ...process.env };
+    delete env.DAHUA_P2P_USERNAME;
+    delete env.DAHUA_P2P_PASSWORD;
+    const child = spawn(binary, [serial, "--info", "--app", profile], { env, stdio: ["ignore", "pipe", "pipe"] });
+    let output = "";
+    const append = (chunk: Buffer) => {
+      output = (output + chunk.toString("utf8")).slice(-4000);
+    };
+    child.stdout?.on("data", append);
+    child.stderr?.on("data", append);
+    const timer = setTimeout(() => child.kill(), 40_000);
+    const finish = () => {
+      clearTimeout(timer);
+      const text = redact(output.trim());
+      const missing = /doesn't exist or turned off/i.test(text);
+      resolve({
+        known: missing ? false : /devP2PVersion|DevVersion|Info field/i.test(text) ? true : null,
+        devP2PVersion: /devP2PVersion\s*:\s*(\S+)/i.exec(text)?.[1] ?? null,
+        deviceVersion: /DevVersion\s*:\s*(\S+)/i.exec(text)?.[1] ?? null,
+        output: text || "(aucune sortie)",
+      });
+    };
+    child.once("error", (error) => {
+      output += `échec du lancement : ${error.message}`;
+      finish();
+    });
+    child.once("close", finish);
+  });
+}
+
+/**
+ * Diagnostic complet d'un accès P2P : pour chaque profil (SmartPSS, DMSS),
+ * présence de l'équipement sur le cloud, puis tentative réelle de tunnel avec
+ * le journal complet de l'utilitaire. Ne réutilise ni ne garde aucun tunnel.
+ */
+export async function diagnoseP2p(
+  options: {
+    serial: string;
+    devicePort: number;
+    username: string;
+    password: string;
+  },
+  onProgress: (message: string) => void = () => {},
+): Promise<{ serial: string; profiles: P2pProfileDiagnostic[]; workingProfile: string | null }> {
+  if (!isP2pAvailable()) {
+    throw new DahuaError("unsupported", "Accès P2P désactivé sur cette instance (DAHUA_P2P_HELPER vidé).");
+  }
+  const profiles: P2pProfileDiagnostic[] = [];
+  for (const profile of P2P_PROFILES) {
+    const label = PROFILE_LABELS[profile] ?? profile;
+    onProgress(`${label} : recherche de l'enregistreur sur le cloud…`);
+    const cloud = await probeCloud(options.serial, profile);
+    let tunnel: P2pProfileDiagnostic["tunnel"] = null;
+    if (cloud.known !== false) {
+      onProgress(`${label} : ouverture du tunnel…`);
+      const startedAt = Date.now();
+      try {
+        const handle = await establishTunnel(options, profile, Math.max(READY_TIMEOUT_MS, DIAGNOSTIC_TIMEOUT_MS));
+        // Tunnel établi : on le referme aussitôt (diagnostic seulement).
+        const opened = tunnels.get(tunnelKey(options.serial, options.devicePort));
+        const output = redact(opened?.output.join("\n") ?? "");
+        handle.release();
+        if (opened) closeTunnel(opened);
+        workingProfile.set(options.serial, profile);
+        tunnel = { ok: true, durationMs: Date.now() - startedAt, error: null, output };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        tunnel = {
+          ok: false,
+          durationMs: Date.now() - startedAt,
+          // Message sans la queue de journal (rendue en entier ci-dessous).
+          error: redact(message.split(" : ")[0]),
+          output: redact((error as { p2pOutput?: string }).p2pOutput ?? message),
+        };
+      }
+    }
+    profiles.push({ profile, label: PROFILE_LABELS[profile] ?? profile, cloud, tunnel });
+  }
+  return {
+    serial: options.serial,
+    profiles,
+    workingProfile: profiles.find((p) => p.tunnel?.ok)?.profile ?? null,
+  };
 }
