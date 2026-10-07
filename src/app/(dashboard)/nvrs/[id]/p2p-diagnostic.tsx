@@ -13,25 +13,29 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
  * complet — à copier pour le support.
  */
 
+type Attempt = { auth: string; label: string; ok: boolean; durationMs: number; error: string | null; output: string };
+
 type ProfileReport = {
   profile: string;
   label: string;
   cloud: { known: boolean | null; devP2PVersion: string | null; deviceVersion: string | null; output: string };
-  tunnel: { ok: boolean; durationMs: number; error: string | null; output: string } | null;
+  attempts: Attempt[];
 };
 
 type Report = {
   serial: string;
-  workingProfile: string | null;
+  working: { profile: string; auth: string; label: string } | null;
   profiles: ProfileReport[];
   nvr: { name: string; model: string | null };
 };
+
+const seconds = (ms: number) => `${(ms / 1000).toFixed(1)} s`;
 
 function reportText(report: Report): string {
   const lines = [
     `Diagnostic P2P Sentinel — ${report.nvr.name} (${report.nvr.model ?? "modèle ?"}) — ${report.serial}`,
     `Date : ${new Date().toLocaleString("fr-FR")}`,
-    `Profil fonctionnel : ${report.workingProfile ?? "aucun"}`,
+    `Accès fonctionnel : ${report.working?.label ?? "aucun"}`,
   ];
   for (const p of report.profiles) {
     lines.push(
@@ -42,10 +46,11 @@ function reportText(report: Report): string {
         (p.cloud.deviceVersion ? ` · firmware ${p.cloud.deviceVersion}` : ""),
       p.cloud.output,
     );
-    if (p.tunnel) {
+    for (const a of p.attempts) {
       lines.push(
-        `Tunnel : ${p.tunnel.ok ? "établi" : "échec"} en ${(p.tunnel.durationMs / 1000).toFixed(1)} s${p.tunnel.error ? ` — ${p.tunnel.error}` : ""}`,
-        p.tunnel.output,
+        "",
+        `--- Tunnel, ${a.label} : ${a.ok ? "établi" : "échec"} en ${seconds(a.durationMs)}${a.error ? ` — ${a.error}` : ""}`,
+        a.output,
       );
     }
   }
@@ -131,17 +136,16 @@ export function P2pDiagnosticButton({ nvrId }: { nvrId: string }) {
           ) : report ? (
             <div className="space-y-4">
               <p className="text-sm">
-                {report.workingProfile ? (
+                {report.working ? (
                   <>
                     <Badge className="bg-green-500/10 text-green-400 border-green-500/25 mr-2">Accès rétabli</Badge>
-                    Le tunnel s&apos;établit avec le profil{" "}
-                    <strong>{report.profiles.find((p) => p.profile === report.workingProfile)?.label}</strong> ; Sentinel
-                    l&apos;utilisera désormais pour cet enregistreur.
+                    Le tunnel s&apos;établit via <strong>{report.working.label}</strong> ; Sentinel l&apos;utilisera
+                    désormais pour cet enregistreur.
                   </>
                 ) : (
                   <>
                     <Badge className="bg-red-500/10 text-red-400 border-red-500/25 mr-2">Aucun accès</Badge>
-                    Aucun des deux clouds ne permet d&apos;ouvrir le tunnel. Copiez le rapport ci-dessous pour analyse.
+                    Aucune combinaison ne permet d&apos;ouvrir le tunnel. Copiez le rapport ci-dessous pour analyse.
                   </>
                 )}
               </p>
@@ -157,23 +161,30 @@ export function P2pDiagnosticButton({ nvrId }: { nvrId: string }) {
                       <Badge className="bg-amber-400/10 text-amber-300 border-amber-400/25">indéterminé</Badge>
                     )}
                     {p.cloud.devP2PVersion && <span className="text-[11px] text-[#8896b4]">P2P {p.cloud.devP2PVersion}</span>}
-                    {p.tunnel &&
-                      (p.tunnel.ok ? (
+                    {p.cloud.deviceVersion && (
+                      <span className="text-[11px] text-[#8896b4]">firmware {p.cloud.deviceVersion}</span>
+                    )}
+                  </div>
+                  {p.attempts.map((a) => (
+                    <div key={a.auth} className="flex flex-wrap items-center gap-2 text-xs">
+                      <span className="text-[#8896b4]">{a.label} :</span>
+                      {a.ok ? (
                         <Badge className="bg-green-500/10 text-green-400 border-green-500/25">
-                          tunnel établi ({(p.tunnel.durationMs / 1000).toFixed(1)} s)
+                          tunnel établi ({seconds(a.durationMs)})
                         </Badge>
                       ) : (
                         <Badge className="bg-red-500/10 text-red-400 border-red-500/25">
-                          tunnel en échec ({(p.tunnel.durationMs / 1000).toFixed(1)} s)
+                          échec ({seconds(a.durationMs)})
                         </Badge>
-                      ))}
-                  </div>
-                  {p.tunnel?.error && <p className="text-xs text-red-300">{p.tunnel.error}</p>}
+                      )}
+                      {a.error && <span className="text-red-300">{a.error}</span>}
+                    </div>
+                  ))}
                   <details>
                     <summary className="cursor-pointer text-[11px] text-[#8896b4] hover:text-[#dde1e4]">Journal</summary>
                     <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-all text-[10px] text-[#8896b4]">
                       {p.cloud.output}
-                      {p.tunnel ? `\n\n${p.tunnel.output}` : ""}
+                      {p.attempts.map((a) => `\n\n--- ${a.label}\n${a.output}`).join("")}
                     </pre>
                   </details>
                 </div>

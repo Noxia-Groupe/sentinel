@@ -128,6 +128,11 @@ type Tunnel = {
   output: string[];
   /** Passé à true dès que le marqueur de disponibilité est vu sur la sortie. */
   readySeen: boolean;
+  /**
+   * Échec reconnu sur la sortie avant la fin du délai : inutile d'attendre les
+   * nouvelles tentatives internes de l'utilitaire, elles échoueraient pareil.
+   */
+  verdict?: string;
 };
 
 const tunnels = new Map<string, Tunnel>();
@@ -152,29 +157,56 @@ export const P2P_PROFILES = ["smartpss", "dmss"] as const;
 
 export const PROFILE_LABELS: Record<string, string> = { smartpss: "SmartPSS", dmss: "DMSS" };
 
-/** Profil qui a réussi pour chaque numéro de série, pour ne pas re-tâtonner. */
-const workingProfile = new Map<string, string>();
-
 /**
- * Ordre d'essai des profils : celui qui a déjà marché pour ce NVR, sinon
- * `DAHUA_P2P_PROFILE` (défaut `smartpss`), puis l'autre en repli.
+ * Canal P2P authentifié (« type 1 », exigé par les firmwares postérieurs à
+ * 2024.07) ou non (« type 0 », firmwares antérieurs). Un équipement ancien
+ * ignore une demande authentifiée ; un équipement récent refuse une demande
+ * non authentifiée (403). Les identifiants servent de toute façon ensuite à
+ * l'API HTTP de l'enregistreur, qui les vérifie à chaque requête.
  */
-function profileOrder(serial: string): string[] {
-  const configured = process.env.DAHUA_P2P_PROFILE?.trim().toLowerCase() || "smartpss";
-  const first = workingProfile.get(serial) ?? configured;
-  const known = (P2P_PROFILES as readonly string[]).includes(first);
-  return known ? [first, ...P2P_PROFILES.filter((p) => p !== first)] : [first];
+export type ChannelAuth = "auth" | "none";
+
+export const AUTH_LABELS: Record<ChannelAuth, string> = {
+  auth: "canal authentifié",
+  none: "canal sans authentification",
+};
+
+export type P2pVariant = { profile: string; auth: ChannelAuth };
+
+export function variantLabel(variant: P2pVariant): string {
+  return `${PROFILE_LABELS[variant.profile] ?? variant.profile} · ${AUTH_LABELS[variant.auth]}`;
 }
 
-/** Erreur de configuration locale : inutile d'essayer un autre profil. */
+/** Combinaison qui a réussi pour chaque numéro de série, pour ne pas re-tâtonner. */
+const workingVariant = new Map<string, P2pVariant>();
+
+/**
+ * Ordre d'essai : la combinaison qui a déjà marché pour ce NVR, sinon le
+ * profil `DAHUA_P2P_PROFILE` (défaut `smartpss`) puis l'autre, chacun en canal
+ * authentifié puis sans authentification.
+ */
+function variantOrder(serial: string): P2pVariant[] {
+  const configured = process.env.DAHUA_P2P_PROFILE?.trim().toLowerCase() || "smartpss";
+  const known = (P2P_PROFILES as readonly string[]).includes(configured);
+  const profiles = known ? [configured, ...P2P_PROFILES.filter((p) => p !== configured)] : [configured];
+  const all: P2pVariant[] = profiles.flatMap((profile) => [
+    { profile, auth: "auth" as const },
+    { profile, auth: "none" as const },
+  ]);
+  const remembered = workingVariant.get(serial);
+  if (!remembered) return all;
+  return [remembered, ...all.filter((v) => v.profile !== remembered.profile || v.auth !== remembered.auth)];
+}
+
+/** Erreur de configuration locale : inutile d'essayer une autre combinaison. */
 function isLocalFailure(error: unknown): boolean {
   return error instanceof DahuaError && error.reason === "invalid";
 }
 
 /**
- * Établit le tunnel en essayant l'autre profil sur tout échec de négociation
- * (cloud qui ne connaît pas l'équipement, équipement muet, accès refusé).
- * Le message final récapitule l'échec de chaque profil.
+ * Établit le tunnel en essayant chaque combinaison profil × type de canal sur
+ * tout échec de négociation (cloud qui ne connaît pas l'équipement,
+ * équipement muet, canal refusé). Le message final récapitule chaque essai.
  */
 async function establishWithProfiles(options: {
   serial: string;
@@ -182,26 +214,30 @@ async function establishWithProfiles(options: {
   username: string;
   password: string;
 }): Promise<TunnelHandle> {
-  const failures: { profile: string; error: unknown }[] = [];
-  for (const profile of profileOrder(options.serial)) {
+  const failures: { variant: P2pVariant; error: unknown }[] = [];
+  for (const variant of variantOrder(options.serial)) {
     try {
-      const handle = await establishTunnel(options, profile);
-      workingProfile.set(options.serial, profile);
+      const handle = await establishTunnel(options, variant);
+      workingVariant.set(options.serial, variant);
       return handle;
     } catch (error) {
       if (isLocalFailure(error)) throw error;
-      failures.push({ profile, error });
+      failures.push({ variant, error });
     }
   }
   if (failures.length === 1) throw failures[0].error;
-  // Tous les profils refusent l'accès : c'est bien une affaire d'identifiants.
-  const allAuth = failures.every((f) => f.error instanceof DahuaError && f.error.reason === "auth");
+  // Tous les canaux authentifiés refusent les identifiants : c'est bien une
+  // affaire de compte (les refus de canal non authentifié sont attendus).
+  const authFailures = failures.filter((f) => f.variant.auth === "auth");
+  const allAuth =
+    authFailures.length > 0 &&
+    authFailures.every((f) => f.error instanceof DahuaError && f.error.reason === "auth");
   throw new DahuaError(
     allAuth ? "auth" : "unreachable",
     failures
-      .map(({ profile, error }) => {
+      .map(({ variant, error }) => {
         const message = error instanceof Error ? error.message : String(error);
-        return `[${PROFILE_LABELS[profile] ?? profile}] ${message}`;
+        return `[${variantLabel(variant)}] ${message}`;
       })
       .join(" ⟶ "),
   );
@@ -265,13 +301,26 @@ async function waitForReady(port: number, timeoutMs: number, tunnel: Tunnel): Pr
   const usesMarker = READY_PATTERN.length > 0;
 
   while (Date.now() < deadline) {
+    if (tunnel.verdict) {
+      throw new DahuaError("unreachable", `${tunnel.verdict}${describeOutput(tunnel)}`);
+    }
     if (tunnel.child.exitCode !== null || tunnel.child.signalCode !== null) {
-      const authRefused = /authentication failed|requires authentication/i.test(tunnel.output.join(" "));
+      const output = tunnel.output.join(" ");
+      if (/authentication failed/i.test(output)) {
+        throw new DahuaError(
+          "auth",
+          `Accès refusé par l'enregistreur sur le canal P2P (identifiants ou sel d'authentification)${describeOutput(tunnel)}`,
+        );
+      }
+      if (/requires authentication/i.test(output)) {
+        throw new DahuaError(
+          "unreachable",
+          `L'enregistreur exige un canal authentifié (firmware récent)${describeOutput(tunnel)}`,
+        );
+      }
       throw new DahuaError(
-        authRefused ? "auth" : "unreachable",
-        authRefused
-          ? `Accès refusé par l'enregistreur sur le canal P2P (identifiants ou sel d'authentification)${describeOutput(tunnel)}`
-          : `L'utilitaire P2P s'est arrêté avant d'établir le tunnel${describeOutput(tunnel)}`,
+        "unreachable",
+        `L'utilitaire P2P s'est arrêté avant d'établir le tunnel${describeOutput(tunnel)}`,
       );
     }
 
@@ -383,7 +432,7 @@ async function establishTunnel(
     username: string;
     password: string;
   },
-  profile: string,
+  variant: P2pVariant,
   timeoutMs = READY_TIMEOUT_MS,
 ): Promise<TunnelHandle> {
   const port = await allocatePort();
@@ -407,8 +456,9 @@ async function establishTunnel(
       DAHUA_P2P_PASSWORD: options.password,
       DAHUA_P2P_LOCAL_PORT: String(port),
       DAHUA_P2P_DEVICE_PORT: String(options.devicePort),
-      // Profil applicatif dh-fwd de cette tentative (voir profileOrder).
-      DAHUA_P2P_PROFILE: profile,
+      // Profil applicatif et type de canal de cette tentative (voir variantOrder).
+      DAHUA_P2P_PROFILE: variant.profile,
+      DAHUA_P2P_AUTH: variant.auth === "none" ? "none" : "",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -431,6 +481,13 @@ async function establishTunnel(
       tunnel.readySeen = true;
     }
     tunnel.output.push(text.trim());
+    if (!tunnel.verdict && !tunnel.readySeen) {
+      if (/read device response:[^\n]*i\/o timeout/i.test(text)) {
+        tunnel.verdict = "Le cloud a relayé la demande mais l'enregistreur n'a pas répondu";
+      } else if (/Info field absent \(reply \[404/i.test(text)) {
+        tunnel.verdict = "Ce cloud ne fournit pas les informations de l'enregistreur (404)";
+      }
+    }
     // On ne garde que les dernières lignes : un utilitaire bavard ne doit pas
     // faire enfler la mémoire du conteneur.
     if (tunnel.output.length > 20) tunnel.output.splice(0, tunnel.output.length - 20);
@@ -512,13 +569,22 @@ export type P2pProfileDiagnostic = {
   label: string;
   /** Le cloud de ce profil connaît-il l'équipement (et le dit en ligne) ? */
   cloud: { known: boolean | null; devP2PVersion: string | null; deviceVersion: string | null; output: string };
-  tunnel: { ok: boolean; durationMs: number; error: string | null; output: string } | null;
+  /** Une tentative de tunnel par type de canal (authentifié, puis sans). */
+  attempts: {
+    auth: ChannelAuth;
+    label: string;
+    ok: boolean;
+    durationMs: number;
+    error: string | null;
+    output: string;
+  }[];
 };
 
 /** Masque les valeurs sensibles d'une sortie de l'utilitaire (sel, jetons). */
 function redact(text: string): string {
   return text
-    .replace(/(randsalt\s*[:=]\s*)\S+/gi, "$1[masqué]")
+    // Ligne « randsalt : <valeur> » de `--info` (pas les messages d'erreur).
+    .replace(/^(\s*randsalt\s*:\s*)\S+\s*$/gim, "$1[masqué]")
     .replace(/("?(?:token|nonce|password|pwd)"?\s*[:=]\s*)"?[^\s",}]+/gi, "$1[masqué]");
 }
 
@@ -574,44 +640,48 @@ export async function diagnoseP2p(
     password: string;
   },
   onProgress: (message: string) => void = () => {},
-): Promise<{ serial: string; profiles: P2pProfileDiagnostic[]; workingProfile: string | null }> {
+): Promise<{ serial: string; profiles: P2pProfileDiagnostic[]; working: (P2pVariant & { label: string }) | null }> {
   if (!isP2pAvailable()) {
     throw new DahuaError("unsupported", "Accès P2P désactivé sur cette instance (DAHUA_P2P_HELPER vidé).");
   }
   const profiles: P2pProfileDiagnostic[] = [];
+  let working: (P2pVariant & { label: string }) | null = null;
   for (const profile of P2P_PROFILES) {
     const label = PROFILE_LABELS[profile] ?? profile;
     onProgress(`${label} : recherche de l'enregistreur sur le cloud…`);
     const cloud = await probeCloud(options.serial, profile);
-    let tunnel: P2pProfileDiagnostic["tunnel"] = null;
+    const attempts: P2pProfileDiagnostic["attempts"] = [];
     if (cloud.known !== false) {
-      onProgress(`${label} : ouverture du tunnel…`);
-      const startedAt = Date.now();
-      try {
-        const handle = await establishTunnel(options, profile, Math.max(READY_TIMEOUT_MS, DIAGNOSTIC_TIMEOUT_MS));
-        // Tunnel établi : on le referme aussitôt (diagnostic seulement).
-        const opened = tunnels.get(tunnelKey(options.serial, options.devicePort));
-        const output = redact(opened?.output.join("\n") ?? "");
-        handle.release();
-        if (opened) closeTunnel(opened);
-        workingProfile.set(options.serial, profile);
-        tunnel = { ok: true, durationMs: Date.now() - startedAt, error: null, output };
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        tunnel = {
-          ok: false,
-          durationMs: Date.now() - startedAt,
-          // Message sans la queue de journal (rendue en entier ci-dessous).
-          error: redact(message.split(" : ")[0]),
-          output: redact((error as { p2pOutput?: string }).p2pOutput ?? message),
-        };
+      for (const auth of ["auth", "none"] as const) {
+        const variant = { profile, auth };
+        onProgress(`${label} : ouverture du tunnel (${AUTH_LABELS[auth]})…`);
+        const startedAt = Date.now();
+        try {
+          const handle = await establishTunnel(options, variant, Math.max(READY_TIMEOUT_MS, DIAGNOSTIC_TIMEOUT_MS));
+          // Tunnel établi : on le referme aussitôt (diagnostic seulement).
+          const opened = tunnels.get(tunnelKey(options.serial, options.devicePort));
+          const output = redact(opened?.output.join("\n") ?? "");
+          handle.release();
+          if (opened) closeTunnel(opened);
+          workingVariant.set(options.serial, variant);
+          working ??= { ...variant, label: variantLabel(variant) };
+          attempts.push({ auth, label: AUTH_LABELS[auth], ok: true, durationMs: Date.now() - startedAt, error: null, output });
+          break;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          attempts.push({
+            auth,
+            label: AUTH_LABELS[auth],
+            ok: false,
+            durationMs: Date.now() - startedAt,
+            // Message sans la queue de journal (rendue en entier ci-dessous).
+            error: redact(message.split(" : ")[0]),
+            output: redact((error as { p2pOutput?: string }).p2pOutput ?? message),
+          });
+        }
       }
     }
-    profiles.push({ profile, label: PROFILE_LABELS[profile] ?? profile, cloud, tunnel });
+    profiles.push({ profile, label, cloud, attempts });
   }
-  return {
-    serial: options.serial,
-    profiles,
-    workingProfile: profiles.find((p) => p.tunnel?.ok)?.profile ?? null,
-  };
+  return { serial: options.serial, profiles, working };
 }

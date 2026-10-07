@@ -59,14 +59,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           action: "nvr.p2p_diagnostic",
           targetType: "nvr",
           targetId: id,
-          success: report.workingProfile !== null,
+          success: report.working !== null,
           metadata: {
-            workingProfile: report.workingProfile,
+            working: report.working ? report.working.label : null,
             profiles: report.profiles.map((p) => ({
               profile: p.profile,
               cloudKnown: p.cloud.known,
               devP2PVersion: p.cloud.devP2PVersion,
-              tunnelOk: p.tunnel?.ok ?? null,
+              attempts: p.attempts.map((a) => ({ auth: a.auth, ok: a.ok })),
             })),
           },
         });

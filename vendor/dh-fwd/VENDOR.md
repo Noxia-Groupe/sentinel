@@ -79,6 +79,17 @@ Toutes les modifications sont signalées par un commentaire
    et **noms** de champs, jamais leurs valeurs — pour diagnostiquer.
    Tests : `sentinel_patch_test.go`.
 
+4. **`main.go` — canal non authentifié à la demande (`DAHUA_P2P_AUTH=none`).**
+   Les identifiants fournis par l'environnement font passer le canal en
+   type 1 (authentifié), indispensable aux firmwares postérieurs à 2024.07.
+   Les firmwares plus anciens (ex. `DHI-NVR4204P-4KS2/L` en 6.6.10, sans blob
+   `Info` ni RandSalt) **ignorent** une demande de canal authentifiée
+   (`p2p-channel ack timeout`). `DAHUA_P2P_AUTH=none` force le type 0 tout en
+   laissant les identifiants disponibles pour l'API HTTP de l'équipement
+   (Digest), qui authentifie toujours chaque requête. SENTINEL essaie le canal
+   authentifié puis, en cas de silence, le canal sans authentification.
+   Tests : `TestSentinelChannelType` dans `sentinel_patch_test.go`.
+
 ## Reconstruire / mettre à jour
 
 Le binaire est compilé dans l'image (étape `dh-fwd-builder` du `Dockerfile`)
