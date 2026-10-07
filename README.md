@@ -268,10 +268,20 @@ identité (« p2p-channel ack timeout »). Dans les deux cas, SENTINEL bascule
 automatiquement sur l'autre profil et retient, pour chaque NVR, celui qui a
 fonctionné. La variable ne fixe donc que le profil essayé en premier.
 
+**Canal authentifié ou non.** Les firmwares postérieurs à 2024.07 exigent un
+canal P2P authentifié (type 1) ; les plus anciens (sans sel d'authentification
+dans leur blob `Info`, par exemple un `DHI-NVR4204P-4KS2/L` en 6.6.10) ignorent
+une demande authentifiée et n'ouvrent qu'un canal non authentifié (type 0).
+SENTINEL essaie donc, pour chaque cloud, le canal authentifié puis le canal sans
+authentification, et retient la combinaison qui fonctionne. Les identifiants
+restent exigés par l'API HTTP de l'enregistreur à chaque requête. Une tentative
+est abandonnée dès que l'utilitaire constate que l'enregistreur ne répond pas,
+sans attendre ses nouvelles tentatives internes.
+
 **Diagnostic P2P.** Sur la fiche d'un enregistreur en P2P, le bouton
 *Diagnostic P2P* teste les deux clouds : présence de l'équipement, version P2P,
-puis tentative réelle de tunnel avec le journal de l'utilitaire. Le profil qui
-fonctionne est retenu, et *Copier le rapport* donne un texte à transmettre au
+puis tentative réelle de tunnel en canal authentifié et sans authentification,
+avec le journal de l'utilitaire. La combinaison qui fonctionne est retenue, et *Copier le rapport* donne un texte à transmettre au
 support. Les valeurs sensibles (sel d'authentification) y sont masquées.
 
 **Enregistreur injoignable.** Une fois un enregistreur déclaré injoignable, la

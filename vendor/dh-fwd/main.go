@@ -273,9 +273,7 @@ func main() {
 			password = v
 		}
 	}
-	if username != "" && password != "" && dtype == 0 {
-		dtype = 1
-	}
+	dtype = sentinelChannelType(dtype, username, password, os.Getenv("DAHUA_P2P_AUTH"))
 	if p := os.Getenv("DAHUA_P2P_PROFILE"); p != "" {
 		appName = p
 	}
@@ -808,4 +806,24 @@ func showFailPrompt(serial string, fails []failEntry, ui *UI) byte {
 			return 'c'
 		}
 	}
+}
+
+// sentinelChannelType — SENTINEL vendor patch.
+//
+// Credentials normally switch the P2P channel to Type 1 (authenticated
+// channel, required by firmware released after 2024.07). Older firmware
+// predates channel authentication and silently ignores a Type 1 request
+// (p2p-channel ack timeout), so SENTINEL retries with DAHUA_P2P_AUTH=none:
+// the channel is opened as Type 0 while the credentials stay available in
+// the environment for the device's own HTTP API (Digest), which still
+// authenticates every request.
+func sentinelChannelType(dtype int, username, password, auth string) int {
+	switch strings.ToLower(strings.TrimSpace(auth)) {
+	case "none", "0", "type0":
+		return 0
+	}
+	if username != "" && password != "" && dtype == 0 {
+		return 1
+	}
+	return dtype
 }

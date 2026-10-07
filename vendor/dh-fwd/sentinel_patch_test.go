@@ -83,3 +83,22 @@ func TestProbeDeviceInfoNoBlobFailsClosedWithDiagnostic(t *testing.T) {
 		t.Fatalf("error %q leaks a field value", err)
 	}
 }
+
+func TestSentinelChannelType(t *testing.T) {
+	cases := []struct {
+		name, user, pass, auth string
+		dtype, want            int
+	}{
+		{"creds imply type 1", "admin", "pw", "", 0, 1},
+		{"no creds stay type 0", "", "", "", 0, 0},
+		{"auth=none forces type 0 with creds", "admin", "pw", "none", 0, 0},
+		{"auth=none overrides explicit type 1", "admin", "pw", "NONE ", 1, 0},
+		{"auth=0 alias", "admin", "pw", "0", 0, 0},
+		{"unknown auth value keeps default", "admin", "pw", "type1", 0, 1},
+	}
+	for _, c := range cases {
+		if got := sentinelChannelType(c.dtype, c.user, c.pass, c.auth); got != c.want {
+			t.Errorf("%s: got %d, want %d", c.name, got, c.want)
+		}
+	}
+}
