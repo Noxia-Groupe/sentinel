@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireOperator, requireUser } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { recordAudit } from "@/lib/audit";
+import { LIMITS, clip, clipRequired } from "@/lib/validate";
 
 // GET /api/clients — Liste des clients avec le décompte de leur parc
 export async function GET(req: NextRequest) {
@@ -33,13 +34,13 @@ export async function POST(req: NextRequest) {
   if (!guard.ok) return guard.response;
 
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
-  const name = typeof body.name === "string" ? body.name.trim() : "";
+  const name = clipRequired(body.name, LIMITS.name);
 
   if (!name) {
     return NextResponse.json({ error: "Le nom du client est requis" }, { status: 400 });
   }
 
-  const code = typeof body.code === "string" && body.code.trim() ? body.code.trim() : null;
+  const code = clip(body.code, LIMITS.code);
   if (code) {
     const duplicate = await prisma.client.findUnique({ where: { code } });
     if (duplicate) {
@@ -54,11 +55,11 @@ export async function POST(req: NextRequest) {
     data: {
       name,
       code,
-      contactName: asString(body.contactName),
-      contactEmail: asString(body.contactEmail),
-      contactPhone: asString(body.contactPhone),
-      address: asString(body.address),
-      notes: asString(body.notes),
+      contactName: clip(body.contactName, LIMITS.name),
+      contactEmail: clip(body.contactEmail, LIMITS.email),
+      contactPhone: clip(body.contactPhone, LIMITS.phone),
+      address: clip(body.address, LIMITS.address),
+      notes: clip(body.notes, LIMITS.notes),
     },
   });
 
@@ -73,6 +74,3 @@ export async function POST(req: NextRequest) {
   return NextResponse.json(client, { status: 201 });
 }
 
-function asString(value: unknown): string | null {
-  return typeof value === "string" && value.trim() ? value.trim() : null;
-}

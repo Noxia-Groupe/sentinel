@@ -5,6 +5,7 @@ import { decrypt } from "@/lib/crypto";
 import { loadNvr, pickCredential } from "@/lib/dahua/service";
 import { diagnoseP2p } from "@/lib/dahua/p2p";
 import { trafficScope, originForActor } from "@/lib/traffic";
+import { p2pDiagnosticGate } from "@/lib/concurrency";
 
 /**
  * POST /api/nvrs/[id]/p2p-diagnostic — Diagnostic de l'accès P2P : pour chaque
@@ -30,6 +31,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!credential) {
     return NextResponse.json({ error: "Aucun compte enregistré pour cet enregistreur" }, { status: 400 });
   }
+
+  // Un diagnostic à la fois par enregistreur, plafond global, délai entre deux.
+  const gate = p2pDiagnosticGate.acquire(nvr.id);
+  if (!gate.ok) {
+    return NextResponse.json(
+      { error: gate.message },
+      { status: gate.reason === "saturated" ? 503 : 429, headers: { "Retry-After": String(gate.retryAfter) } },
+    );
+  }
+  const release = gate.release;
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
@@ -74,6 +85,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       } catch (error) {
         send({ error: error instanceof Error ? error.message : "Diagnostic impossible" });
       } finally {
+        release();
         clearInterval(heartbeat);
         controller.close();
       }

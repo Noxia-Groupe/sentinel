@@ -1,5 +1,7 @@
 import crypto from "node:crypto";
 import dns from "node:dns/promises";
+import http from "node:http";
+import https from "node:https";
 import net from "node:net";
 import type { Prisma } from "@/generated/prisma/client";
 import { instructionsFor } from "./mcp/playbooks";
@@ -111,15 +113,68 @@ export function validateWebhookUrl(raw: string): { ok: true; url: string } | { o
   return { ok: true, url: url.toString() };
 }
 
-/** Revérifie la résolution DNS au moment de l'envoi (anti DNS rebinding). */
-async function assertDeliverableHost(url: URL): Promise<void> {
+/**
+ * Résout la destination au moment de l'envoi, vérifie chaque adresse, et
+ * renvoie celle qui sera réellement contactée : la connexion se fait sur cette
+ * adresse-là (pas de nouvelle résolution entre le contrôle et l'envoi).
+ */
+async function resolveDeliverableAddress(url: URL): Promise<string> {
   const host = url.hostname.replace(/^\[|\]$/g, "");
   const addresses = net.isIP(host)
     ? [host]
     : (await dns.lookup(host, { all: true })).map((entry) => entry.address);
+  if (addresses.length === 0) throw new Error("La destination ne résout vers aucune adresse");
   if (addresses.some(isForbiddenAddress)) {
     throw new Error("La destination résout vers une adresse non autorisée");
   }
+  return addresses.find((address) => net.isIPv4(address)) ?? addresses[0];
+}
+
+/**
+ * POST signé vers l'adresse résolue, avec le nom d'hôte d'origine pour le
+ * TLS (SNI, validation du certificat) et l'en-tête `Host`. Les redirections
+ * ne sont pas suivies, et le corps de la réponse n'est pas lu : seul le
+ * statut sert au diagnostic.
+ */
+function postSigned(
+  url: URL,
+  address: string,
+  headers: Record<string, string>,
+  body: string,
+  timeoutMs: number,
+): Promise<{ status: number }> {
+  const secure = url.protocol === "https:";
+  const transport = secure ? https : http;
+  const family = net.isIPv6(address) ? 6 : 4;
+  const lookup = (
+    _hostname: string,
+    options: { all?: boolean },
+    callback: (...args: unknown[]) => void,
+  ) => {
+    if (options?.all) callback(null, [{ address, family }]);
+    else callback(null, address, family);
+  };
+  return new Promise((resolve, reject) => {
+    const req = transport.request(
+      {
+        host: url.hostname,
+        port: url.port ? Number(url.port) : secure ? 443 : 80,
+        path: `${url.pathname}${url.search}`,
+        method: "POST",
+        headers: { ...headers, "Content-Length": Buffer.byteLength(body) },
+        servername: secure && !net.isIP(url.hostname) ? url.hostname : undefined,
+        lookup: lookup as unknown as http.RequestOptions["lookup"],
+        timeout: timeoutMs,
+      },
+      (res) => {
+        res.resume();
+        res.on("end", () => resolve({ status: res.statusCode ?? 0 }));
+      },
+    );
+    req.on("timeout", () => req.destroy(new Error(`Délai dépassé après ${timeoutMs} ms`)));
+    req.on("error", reject);
+    req.end(body);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -405,7 +460,7 @@ export async function deliver(deliveryId: string): Promise<DeliveryResult> {
   } else {
     try {
       const url = new URL(delivery.endpoint.url);
-      await assertDeliverableHost(url);
+      const address = await resolveDeliverableAddress(url);
       const secret = decrypt(delivery.endpoint.secretEncrypted);
       const body = JSON.stringify({
         ...(delivery.payload as Record<string, unknown>),
@@ -418,9 +473,10 @@ export async function deliver(deliveryId: string): Promise<DeliveryResult> {
       const timestamp = Math.floor(Date.now() / 1000);
       const signature = signBody(secret, body, timestamp);
 
-      const res = await fetch(url, {
-        method: "POST",
-        headers: {
+      const { status } = await postSigned(
+        url,
+        address,
+        {
           "Content-Type": "application/json",
           "User-Agent": "Sentinel-Webhooks/1.0",
           "X-Request-ID": delivery.id,
@@ -430,18 +486,17 @@ export async function deliver(deliveryId: string): Promise<DeliveryResult> {
           "X-Webhook-Signature": signature.v1,
         },
         body,
-        redirect: "manual",
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      });
-      // On ne lit que le début de la réponse, pour le diagnostic.
-      const text = (await res.text().catch(() => "")).slice(0, 300);
-      if (res.ok) {
-        result = { ok: true, status: res.status };
+        REQUEST_TIMEOUT_MS,
+      );
+      if (status >= 200 && status < 300) {
+        result = { ok: true, status };
       } else {
-        result = { ok: false, status: res.status, error: text || res.statusText };
+        // Seul le statut est conservé : le corps d'une réponse d'erreur
+        // pourrait exposer un service interne dans l'interface.
+        result = { ok: false, status, error: `HTTP ${status}` };
         // 4xx = requête refusée (signature, route inconnue…) : réessayer n'y
         // changera rien, sauf délai dépassé ou limitation de débit.
-        retryable = res.status >= 500 || res.status === 408 || res.status === 429;
+        retryable = status >= 500 || status === 408 || status === 429;
       }
     } catch (error) {
       result = { ok: false, error: error instanceof Error ? error.message : String(error) };

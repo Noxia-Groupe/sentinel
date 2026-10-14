@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { LIMITS, clipRequired } from "@/lib/validate";
 import { requireScope, apiError } from "@/lib/api/guard";
 import { prisma } from "@/lib/prisma";
 import { addComment } from "@/lib/alarm-service";
@@ -11,7 +12,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const { id } = await params;
   const payload = (await req.json().catch(() => ({}))) as { body?: unknown };
-  const text = typeof payload.body === "string" ? payload.body.trim() : "";
+  const text = clipRequired(payload.body, LIMITS.comment);
 
   if (!text) return apiError(400, "empty_comment", "Le champ `body` est requis");
 

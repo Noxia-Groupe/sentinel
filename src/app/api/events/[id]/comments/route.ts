@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { addComment } from "@/lib/alarm-service";
+import { LIMITS, clipRequired } from "@/lib/validate";
 
 // POST /api/events/[id]/comments — Ajoute une entrée à la main courante
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -10,7 +11,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const { id } = await params;
   const body = (await req.json().catch(() => ({}))) as { body?: unknown };
-  const text = typeof body.body === "string" ? body.body.trim() : "";
+  const text = clipRequired(body.body, LIMITS.comment);
 
   if (!text) {
     return NextResponse.json({ error: "Le commentaire est vide" }, { status: 400 });

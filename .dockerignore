@@ -1,0 +1,21 @@
+# Contexte de build Docker : seul ce qui sert à construire l'image y entre.
+# Jamais l'historique Git, les dépendances locales ni un fichier d'environnement.
+.git
+.gitignore
+.github
+node_modules
+.next
+out
+.env*
+*.tsbuildinfo
+*.md
+docs
+brand
+.agents
+.claude
+.windsurf
+skills-lock.json
+# Utilitaires vendorés non construits par le Dockerfile, et leurs artefacts.
+vendor/dh-p2p
+vendor/dh-fwd/dh-fwd
+vendor/**/target

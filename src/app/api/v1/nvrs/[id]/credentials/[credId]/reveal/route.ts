@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireScope, apiError } from "@/lib/api/guard";
 import { RevealQuotaError, revealCredential } from "@/lib/credentials";
+import { LIMITS, clip } from "@/lib/validate";
 
 /**
  * POST /api/v1/nvrs/[id]/credentials/[credId]/reveal — Mot de passe en clair.
@@ -26,7 +27,7 @@ export async function POST(
       nvrId: id,
       credentialId: credId,
       actor: guard.actor,
-      reason: typeof body.reason === "string" ? body.reason : undefined,
+      reason: clip(body.reason, LIMITS.reason) ?? undefined,
     });
 
     if (!credential) return apiError(404, "not_found", "Compte introuvable pour cet enregistreur");

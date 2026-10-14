@@ -703,6 +703,27 @@ y compris après résolution DNS au moment de l'envoi.
   du reverse proxy.
 - `dh-fwd` et `ffmpeg` reçoivent un environnement minimal : aucun secret de la
   plateforme n'est transmis aux processus enfants.
+- Enregistreurs joints en **HTTPS** : le certificat (auto-signé) vu au premier
+  contact est **épinglé** (empreinte SHA-256 sur la fiche, journal d'audit) et
+  tout changement est refusé — message explicite, supervision en échec —
+  tant qu'un administrateur ne réinitialise pas l'empreinte depuis la fiche.
+  Aucune donnée n'est envoyée avant cette vérification.
+- `ENCRYPTION_KEY` est vérifiée au démarrage (32 octets) et la plateforme
+  refuse de démarrer sinon. Les chiffrés portent l'identifiant de leur clé :
+  pour tourner la clé, mettre la nouvelle dans `ENCRYPTION_KEY`, l'ancienne
+  dans `ENCRYPTION_KEY_PREVIOUS`, redémarrer (les secrets sont réécrits), puis
+  retirer l'ancienne.
+- Les champs texte reçus par l'API sont bornés (`src/lib/validate.ts`) ; les
+  diagnostics P2P et tests de connexion sont limités (un par enregistreur,
+  plafond global, délai entre deux diagnostics).
+- Conteneurs durcis (`docker-compose.yml`) : aucune capacité, pas
+  d'escalade de privilèges, système de fichiers en lecture seule pour
+  l'application, limites de mémoire, de processus et de journaux. Le
+  contexte de build exclut l'historique Git et tout fichier d'environnement
+  (`.dockerignore`).
+- CI GitHub (`.github/workflows/security.yml`) : typecheck, lint, audit des
+  dépendances, construction de l'image, SBOM et scan de vulnérabilités ;
+  Dependabot propose les mises à jour chaque semaine.
 - Le webhook Dahua, seule route sans session, est protégé par un token
   aléatoire de 192 bits, une limitation de débit par enregistreur et par IP,
   et une taille de corps bornée — voir *Centralisation des alarmes*.
@@ -739,8 +760,14 @@ docker compose up -d --build
 
 `entrypoint.sh` attend PostgreSQL puis applique les fichiers
 `prisma/migrations/*/migration.sql` avec `psql` avant de démarrer le serveur.
-Toutes les migrations sont rejouées à chaque démarrage : elles sont écrites de
-façon **idempotente** (`IF NOT EXISTS`, contraintes ajoutées sous condition).
+Un registre (`_sentinel_migrations`) retient ce qui a été appliqué : chaque
+migration ne l'est qu'une fois, dans une transaction, et **un échec arrête le
+démarrage** (le conteneur sort en erreur, le journal nomme la migration). Au
+premier démarrage avec le registre, les fichiers sont rejoués comme avant, de
+façon tolérante, puis enregistrés. Les migrations restent écrites de façon
+idempotente (`IF NOT EXISTS`, contraintes sous condition) et ne doivent pas
+contenir d'instruction refusée dans une transaction (`CREATE INDEX
+CONCURRENTLY`).
 
 Le service applicatif n'expose aucun port : il est publié par Nginx Proxy
 Manager via le réseau externe `nginx-proxy`. PostgreSQL n'est attaché qu'au

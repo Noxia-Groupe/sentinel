@@ -3,6 +3,7 @@ import { requireOperator } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { encrypt } from "@/lib/crypto";
 import { recordAudit } from "@/lib/audit";
+import { LIMITS, clip, clipRequired, isCredentialType } from "@/lib/validate";
 
 // POST /api/nvrs/[id]/credentials — Enregistre un compte d'accès
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -12,8 +13,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const { id } = await params;
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
 
-  const type = typeof body.type === "string" ? body.type.trim() : "";
-  const username = typeof body.username === "string" ? body.username.trim() : "";
+  const type = clipRequired(body.type, LIMITS.type);
+  const username = clipRequired(body.username, LIMITS.username);
   const password = typeof body.password === "string" ? body.password : "";
 
   if (!type || !username || !password) {
@@ -21,6 +22,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       { error: "Type, identifiant et mot de passe sont requis" },
       { status: 400 },
     );
+  }
+  if (!isCredentialType(type)) {
+    return NextResponse.json({ error: `Type de compte inconnu : ${type}` }, { status: 400 });
+  }
+  if (password.length > LIMITS.password) {
+    return NextResponse.json({ error: `Mot de passe trop long (${LIMITS.password} caractères maximum)` }, { status: 400 });
   }
 
   const nvr = await prisma.nvr.findUnique({ where: { id }, select: { id: true } });
@@ -39,7 +46,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       nvrId: id,
       type,
       username,
-      label: typeof body.label === "string" && body.label.trim() ? body.label.trim() : null,
+      label: clip(body.label, LIMITS.label),
       encryptedPassword: encrypt(password),
     },
     select: { id: true, type: true, username: true, label: true, createdAt: true },

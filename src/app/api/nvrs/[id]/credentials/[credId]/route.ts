@@ -3,6 +3,7 @@ import { requireAdmin, requireOperator } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { encrypt } from "@/lib/crypto";
 import { recordAudit } from "@/lib/audit";
+import { LIMITS, clip, isCredentialType } from "@/lib/validate";
 
 type Params = { params: Promise<{ id: string; credId: string }> };
 
@@ -20,17 +21,21 @@ export async function PUT(req: NextRequest, { params }: Params) {
   }
 
   const password = typeof body.password === "string" && body.password ? body.password : undefined;
+  if (password && password.length > LIMITS.password) {
+    return NextResponse.json({ error: `Mot de passe trop long (${LIMITS.password} caractères maximum)` }, { status: 400 });
+  }
+  const type = clip(body.type, LIMITS.type);
+  if (type && !isCredentialType(type)) {
+    return NextResponse.json({ error: `Type de compte inconnu : ${type}` }, { status: 400 });
+  }
+  const username = clip(body.username, LIMITS.username);
 
   const updated = await prisma.nvrCredential.update({
     where: { id: credId },
     data: {
-      ...(typeof body.username === "string" && body.username.trim()
-        ? { username: body.username.trim() }
-        : {}),
-      ...(typeof body.type === "string" && body.type.trim() ? { type: body.type.trim() } : {}),
-      ...(body.label !== undefined
-        ? { label: typeof body.label === "string" && body.label.trim() ? body.label.trim() : null }
-        : {}),
+      ...(username ? { username } : {}),
+      ...(type ? { type } : {}),
+      ...(body.label !== undefined ? { label: clip(body.label, LIMITS.label) } : {}),
       ...(password
         ? {
             encryptedPassword: encrypt(password),

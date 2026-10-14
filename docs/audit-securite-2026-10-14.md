@@ -394,3 +394,26 @@ Après P0 : note estimée **68 / 100**. Après P0 + P1 : **82 / 100**. Après P2
 - Le réseau `sentinel-internal` est créé par `docker compose up` ; la base change de réseau, les deux conteneurs redémarrent.
 
 **Note estimée après P0 + P1 : 82 / 100.** Reste le palier P2 (épinglage TLS des NVR, durcissement du conteneur, `.dockerignore`, migrations strictes, SBOM, validation de `ENCRYPTION_KEY` et versionnage des chiffrés, plafonds d'opérations P2P, webhooks sortants).
+
+---
+
+## 10. Corrections appliquées — palier P2 (14 octobre 2026)
+
+| Constat | Correction livrée |
+|---|---|
+| V14 | Épinglage TLS « premier contact » (`src/lib/dahua/http.ts`) : avant toute requête HTTPS, une connexion TLS dédiée lit l'empreinte SHA-256 du certificat, la compare à celle épinglée (`Nvr.tlsFingerprint`, migration `20261014170000_tls_pinning`) et refuse tout changement (motif `tls`, 502, message explicite) ; au premier contact l'empreinte est mémorisée et tracée (`nvr.tls_pinned`). Réinitialisation par un administrateur (`DELETE /api/nvrs/[id]/tls-pin`, bouton sur la fiche, audit `nvr.tls_pin_reset`). Cache d'une minute pour ne pas renégocier à chaque requête. |
+| V15 | Livré au palier P0 (`X-Real-IP`, dernière valeur de `X-Forwarded-For`). |
+| V16 | `.dockerignore` (ni `.git`, ni `node_modules`, ni `.env*`, ni la marque) ; `.gitignore` sans exception `.env.production` ; `entrypoint.sh` avec registre `_sentinel_migrations`, migrations appliquées une fois chacune dans une transaction et **échec bloquant** (amorçage tolérant au premier démarrage) ; `docker-compose.yml` : `no-new-privileges`, `cap_drop: ALL` (capacités minimales pour PostgreSQL), racine en lecture seule pour l'application avec `tmpfs` pour `/tmp` et le cache Next.js, limites mémoire/processus/journaux ; CLI en `devDependencies` (P0) ; CI `.github/workflows/security.yml` (typecheck, lint, `npm audit`, build de l'image, SBOM SPDX, scan Trivy bloquant sur les vulnérabilités corrigeables critiques/élevées) et `.github/dependabot.yml` (npm, Docker, actions). |
+| V17 | `src/lib/validate.ts` : bornes sur tous les champs texte (noms 120, identifiants 128, mots de passe 256 — refusés au-delà —, notes et commentaires 4 000, motifs 500…), types de comptes restreints à la liste connue, statut d'un NVR borné (P1). `src/lib/crypto.ts` : clé vérifiée au démarrage (32 octets, arrêt du conteneur sinon), chiffrés versionnés `k<id>:iv:tag:données`, IV de 96 bits, rotation par `ENCRYPTION_KEY_PREVIOUS` avec réécriture automatique des secrets au démarrage (`src/lib/encryption-rotation.ts`, audit `system.encryption_rotate`), ancien format toujours lu. |
+| V18 | `src/lib/concurrency.ts` : diagnostic P2P limité à un par enregistreur, 2 simultanés sur l'instance, 30 s entre deux (`P2P_DIAGNOSTIC_*`) ; tests de connexion limités à un par enregistreur et 8 simultanés (`NVR_TEST_MAX_CONCURRENT`). Réponses 429/503 avec `Retry-After`. |
+| V19 | Webhooks sortants : la destination est résolue une fois, chaque adresse vérifiée, et la connexion se fait **sur l'adresse résolue** (SNI et `Host` conservés) — plus de seconde résolution entre contrôle et envoi ; le corps des réponses n'est plus lu ni conservé, seul le statut HTTP sert au diagnostic. |
+| V20 | Le corps des réponses d'erreur des webhooks sortants n'est plus affiché ; les messages des erreurs TLS et de validation restent explicites mais ne citent aucun contenu distant. |
+
+**Points d'attention au déploiement.**
+
+- Première exécution du nouveau `entrypoint.sh` : le registre est créé et toutes les migrations sont rejouées en mode tolérant (comme avant) puis enregistrées. Les démarrages suivants n'appliquent que les nouvelles, strictement.
+- Racine en lecture seule : si une écriture inattendue apparaît dans les journaux (`EROFS`), ajouter le chemin concerné en `tmpfs` plutôt que retirer `read_only`.
+- Épinglage TLS : un enregistreur HTTPS dont le certificat change (mise à jour de firmware, régénération) passe en échec de supervision avec un message explicite jusqu'à réinitialisation de l'empreinte par un administrateur — c'est le comportement voulu.
+- CI : le scan Trivy est bloquant sur les vulnérabilités **corrigeables** critiques et élevées de l'image ; `npm audit` n'est bloquant qu'en critique (les quatre avis « high » restants sont dans la CLI Prisma, hors bundle).
+
+**Note estimée après P0 + P1 + P2 : 87 / 100.** Ce qui reste hors de portée du code : MFA et accès conditionnel côté Entra, réglages du reverse proxy, revue périodique des rôles et des clés d'API, sauvegardes chiffrées de la base et test de restauration, et une relecture externe du binaire `dh-fwd` vendoré.

@@ -118,6 +118,9 @@ model Nvr {
   httpPort       Int     @default(80)
   // true = l'API CGI est jointe en HTTPS (certificat auto-signé accepté)
   useHttps       Boolean @default(false)
+  // Empreinte SHA-256 du certificat vu au premier contact HTTPS ; tout
+  // changement est refusé tant qu'un administrateur ne la réinitialise pas.
+  tlsFingerprint String?
   // Port RTSP (vidéo en direct, flux secondaire)
   rtspPort       Int     @default(554)
   serialNumber   String? @unique

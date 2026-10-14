@@ -5,6 +5,7 @@ import { recordAudit } from "@/lib/audit";
 import { isReachable } from "@/lib/dahua/service";
 import { p2pStatus } from "@/lib/dahua/p2p";
 import { checkNvrHost } from "@/lib/nvr-address";
+import { LIMITS, clip } from "@/lib/validate";
 
 const NVR_STATUSES = new Set(["unknown", "online", "offline"]);
 
@@ -89,24 +90,24 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   const nvr = await prisma.nvr.update({
     where: { id },
     data: {
-      ...(typeof body.name === "string" && body.name.trim() ? { name: body.name.trim() } : {}),
+      ...(clip(body.name, LIMITS.name) ? { name: clip(body.name, LIMITS.name)! } : {}),
       ...(body.clientId !== undefined
         ? { clientId: typeof body.clientId === "string" && body.clientId ? body.clientId : null }
         : {}),
-      ...(body.ip !== undefined ? { ip: asString(body.ip) } : {}),
+      ...(body.ip !== undefined ? { ip: clip(body.ip, LIMITS.host) } : {}),
       ...(body.port !== undefined ? { port: toPort(body.port, 37777) } : {}),
       ...(body.httpPort !== undefined ? { httpPort: toPort(body.httpPort, 80) } : {}),
       ...(body.rtspPort !== undefined ? { rtspPort: toPort(body.rtspPort, 554) } : {}),
       ...(typeof body.useHttps === "boolean" ? { useHttps: body.useHttps } : {}),
-      ...(body.serialNumber !== undefined ? { serialNumber: asString(body.serialNumber) } : {}),
-      ...(body.model !== undefined ? { model: asString(body.model) } : {}),
-      ...(body.location !== undefined ? { location: asString(body.location) } : {}),
-      ...(body.notes !== undefined ? { notes: asString(body.notes) } : {}),
+      ...(body.serialNumber !== undefined ? { serialNumber: clip(body.serialNumber, LIMITS.serial) } : {}),
+      ...(body.model !== undefined ? { model: clip(body.model, LIMITS.model) } : {}),
+      ...(body.location !== undefined ? { location: clip(body.location, LIMITS.location) } : {}),
+      ...(body.notes !== undefined ? { notes: clip(body.notes, LIMITS.notes) } : {}),
       ...(typeof body.status === "string" && NVR_STATUSES.has(body.status) ? { status: body.status } : {}),
       ...(body.connectionMode === "ip" || body.connectionMode === "p2p"
         ? { connectionMode: body.connectionMode }
         : {}),
-      ...(body.p2pSerial !== undefined ? { p2pSerial: asString(body.p2pSerial) } : {}),
+      ...(body.p2pSerial !== undefined ? { p2pSerial: clip(body.p2pSerial, LIMITS.serial) } : {}),
     },
   });
 
@@ -136,10 +137,6 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   });
 
   return NextResponse.json({ success: true });
-}
-
-function asString(value: unknown): string | null {
-  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 function toPort(value: unknown, fallback: number): number {

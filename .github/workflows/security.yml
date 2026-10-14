@@ -1,0 +1,57 @@
+name: Vérifications et sécurité
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verifier:
+    name: Typecheck, lint, audit des dépendances
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx tsc --noEmit
+      - run: npx eslint .
+      # Bloquant : aucune vulnérabilité critique dans les dépendances de production.
+      - run: npm audit --omit=dev --audit-level=critical
+      # Informatif : les avis « high » restants (voir docs/audit-securite-2026-10-14.md).
+      - run: npm audit --omit=dev --audit-level=high
+        continue-on-error: true
+
+  image:
+    name: Image Docker, SBOM et scan de vulnérabilités
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: sentinel:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: SBOM (SPDX)
+        uses: anchore/sbom-action@v0
+        with:
+          image: sentinel:ci
+          artifact-name: sentinel-sbom.spdx.json
+          output-file: sentinel-sbom.spdx.json
+      - name: Scan de l'image (vulnérabilités corrigeables, critiques et élevées)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: sentinel:ci
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"

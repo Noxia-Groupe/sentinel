@@ -112,6 +112,7 @@ type NvrDetail = {
   httpPort: number;
   rtspPort: number;
   useHttps: boolean;
+  tlsFingerprint: string | null;
   serialNumber: string | null;
   model: string | null;
   firmware: string | null;
@@ -282,6 +283,17 @@ export default function NvrDetailPage() {
     }
   };
 
+  const resetTlsPin = async () => {
+    const res = await fetch(`/api/nvrs/${nvrId}/tls-pin`, { method: "DELETE" });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      toast.success("Empreinte TLS oubliée : le prochain contact épinglera le certificat présenté");
+      void fetchNvr();
+    } else {
+      toast.error(data.error ?? "Réinitialisation impossible");
+    }
+  };
+
   if (loading) {
     return (
       <div className="p-6 lg:p-8 space-y-6">
@@ -433,6 +445,30 @@ export default function NvrDetailPage() {
                   <Info label="N° de série" value={nvr.serialNumber ?? "—"} mono />
                   <Info label="Modèle" value={nvr.model ?? "—"} />
                   <Info label="Firmware" value={nvr.firmware ?? "—"} mono />
+                  {nvr.useHttps && (
+                    <Info
+                      label="Certificat TLS épinglé"
+                      mono
+                      value={
+                        nvr.tlsFingerprint ? (
+                          <span className="inline-flex flex-wrap items-center gap-2">
+                            <span title={nvr.tlsFingerprint}>{nvr.tlsFingerprint.slice(0, 16)}…</span>
+                            {canAdmin && (
+                              <button
+                                type="button"
+                                onClick={() => void resetTlsPin()}
+                                className="text-xs text-[#8896b4] underline hover:text-[#dde1e4]"
+                              >
+                                réinitialiser
+                              </button>
+                            )}
+                          </span>
+                        ) : (
+                          "au prochain contact"
+                        )
+                      }
+                    />
+                  )}
                 </div>
                 <Info label="Emplacement" value={nvr.location ?? "—"} />
                 <Info

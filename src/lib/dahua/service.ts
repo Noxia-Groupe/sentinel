@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { decrypt } from "@/lib/crypto";
 import { recordAudit } from "@/lib/audit";
 import { emitNvrStatus } from "@/lib/outbound-webhooks";
-import type { Actor } from "@/lib/actor";
+import { SYSTEM_ACTOR, type Actor } from "@/lib/actor";
 import { originForActor, trafficScope } from "@/lib/traffic";
 import { DahuaError, type DahuaFailureReason, type DahuaTarget } from "./http";
 import { isP2pAvailable, openTunnel } from "./p2p";
@@ -57,6 +57,21 @@ export async function resolveTarget(
   const username = credential.username;
   const password = decrypt(credential.encryptedPassword);
 
+  // Épinglage du certificat (HTTPS) : mémorisé au premier contact, vérifié ensuite.
+  const pin = {
+    tlsFingerprint: nvr.tlsFingerprint,
+    onTlsFingerprint: async (fingerprint: string) => {
+      await prisma.nvr.update({ where: { id: nvr.id }, data: { tlsFingerprint: fingerprint } });
+      await recordAudit({
+        actor: SYSTEM_ACTOR,
+        action: "nvr.tls_pinned",
+        targetType: "nvr",
+        targetId: nvr.id,
+        metadata: { fingerprint },
+      });
+    },
+  };
+
   if (nvr.connectionMode === "p2p") {
     const serial = nvr.p2pSerial ?? nvr.serialNumber;
     if (!serial) {
@@ -83,6 +98,7 @@ export async function resolveTarget(
         username,
         password,
         timeoutMs: TIMEOUT_MS,
+        ...pin,
       },
       release: tunnel.release,
     };
@@ -103,6 +119,7 @@ export async function resolveTarget(
       username,
       password,
       timeoutMs: TIMEOUT_MS,
+      ...pin,
     },
     release: () => {},
   };
@@ -416,6 +433,8 @@ export function statusForReason(reason: DahuaFailureReason | undefined): number 
       return 409;
     case "unreachable":
       return 504;
+    case "tls":
+      return 502;
     default:
       return 502;
   }
