@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireUser } from "@/lib/session";
+import { requireOperator } from "@/lib/session";
 import { loadNvr, testAllCredentials, testNvrConnection } from "@/lib/dahua/service";
 
 // POST /api/nvrs/[id]/test — Teste la connexion avec un compte enregistré
 // Corps : { credentialId?: string, all?: boolean }
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requireUser(req);
+  const guard = await requireOperator(req);
   if (!guard.ok) return guard.response;
 
   const nvr = await loadNvr((await params).id);

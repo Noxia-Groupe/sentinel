@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireUser } from "@/lib/session";
+import { requireOperator } from "@/lib/session";
 import { recordAudit } from "@/lib/audit";
 import { decrypt } from "@/lib/crypto";
 import { loadNvr, pickCredential } from "@/lib/dahua/service";
@@ -16,7 +16,7 @@ import { trafficScope, originForActor } from "@/lib/traffic";
  * régulier pour qu'un reverse proxy ne coupe pas la requête.
  */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requireUser(req);
+  const guard = await requireOperator(req);
   if (!guard.ok) return guard.response;
 
   const { id } = await params;

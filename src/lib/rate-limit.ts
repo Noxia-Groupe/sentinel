@@ -82,3 +82,6 @@ export const webhookUnknownLimiter = new RateLimiter(
   envInt("WEBHOOK_UNKNOWN_TOKEN_RATE_LIMIT", 20),
   60_000,
 );
+
+/** Révélations de mots de passe par heure et par acteur (utilisateur ou clé d'API). */
+export const revealLimiter = new RateLimiter(envInt("CREDENTIAL_REVEAL_LIMIT_PER_HOUR", 10), 3600_000);

@@ -18,6 +18,8 @@ import { MCP_PROMPTS } from "@/lib/mcp/playbooks";
  */
 
 const SUPPORTED_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
+/** Taille maximale d'un lot JSON-RPC : chaque message compte dans la limitation de débit. */
+const MAX_BATCH = 10;
 const LATEST_PROTOCOL_VERSION = SUPPORTED_PROTOCOL_VERSIONS[0];
 
 const SERVER_INSTRUCTIONS =
@@ -81,10 +83,28 @@ export async function POST(req: Request) {
   const actor = { ...auth.actor, ip: requestIp(req) };
   const handle = (message: JsonRpcRequest) => handleMessage(message, actor, auth.scopes, auth.keyId);
 
-  // Lot JSON-RPC (versions antérieures du protocole) : réponses dans l'ordre,
-  // sans les notifications.
+  // Lot JSON-RPC (versions antérieures du protocole) : borné, chaque message
+  // décompté, exécuté dans l'ordre, réponses sans les notifications.
   if (Array.isArray(body)) {
-    const responses = (await Promise.all(body.map((m) => handle(m as JsonRpcRequest)))).filter(Boolean);
+    if (body.length === 0 || body.length > MAX_BATCH) {
+      return NextResponse.json(rpcError(null, -32600, `Lot JSON-RPC limité à ${MAX_BATCH} messages`), {
+        status: 400,
+      });
+    }
+    for (let index = 1; index < body.length; index += 1) {
+      const extra = checkRateLimit(auth.keyId);
+      if (!extra.allowed) {
+        return NextResponse.json(
+          rpcError(null, -32002, `Trop de requêtes — limite de ${extra.limit} par minute atteinte`),
+          { status: 429, headers: { "Retry-After": String(extra.retryAfter) } },
+        );
+      }
+    }
+    const responses: unknown[] = [];
+    for (const message of body) {
+      const response = await handle(message as JsonRpcRequest);
+      if (response) responses.push(response);
+    }
     return responses.length ? NextResponse.json(responses) : new NextResponse(null, { status: 202 });
   }
 

@@ -7,6 +7,7 @@ import type { Actor } from "@/lib/actor";
 import { originForActor, trafficScope } from "@/lib/traffic";
 import { DahuaError, type DahuaFailureReason, type DahuaTarget } from "./http";
 import { isP2pAvailable, openTunnel } from "./p2p";
+import { resolveNvrHost } from "@/lib/nvr-address";
 import {
   getRightsForAccount,
   testConnection,
@@ -91,9 +92,12 @@ export async function resolveTarget(
     throw new DahuaError("invalid", "Aucune adresse IP renseignée pour cet enregistreur");
   }
 
+  // Adresse vérifiée (jamais la plateforme ni ses voisins) et résolue une fois.
+  const host = await resolveNvrHost(nvr.ip);
+
   return {
     target: {
-      host: nvr.ip,
+      host,
       port: nvr.httpPort,
       useHttps: nvr.useHttps,
       username,

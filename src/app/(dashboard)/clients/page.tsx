@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useCan } from "@/components/role-context";
 import { Building2, Mail, MapPin, Phone, Plus, Search, Server, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -48,6 +49,8 @@ export default function ClientsPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
+  const canOperate = useCan("operator");
+  const canAdmin = useCan("admin");
   const [form, setForm] = useState(EMPTY_FORM);
   const [deleteTarget, setDeleteTarget] = useState<ClientRow | null>(null);
 
@@ -114,10 +117,12 @@ export default function ClientsPage() {
         </div>
 
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-          <DialogTrigger className="inline-flex items-center gap-2 rounded-lg bg-[#0251a1] hover:bg-[#0363c2] text-white font-medium text-sm px-4 py-2.5 transition-all">
-            <Plus className="h-4 w-4" />
-            Ajouter un client
-          </DialogTrigger>
+          {canOperate && (
+            <DialogTrigger className="inline-flex items-center gap-2 rounded-lg bg-[#0251a1] hover:bg-[#0363c2] text-white font-medium text-sm px-4 py-2.5 transition-all">
+              <Plus className="h-4 w-4" />
+              Ajouter un client
+            </DialogTrigger>
+          )}
           <DialogContent className="border-[#132255] bg-[#0d1537] text-[#dde1e4]">
             <DialogHeader>
               <DialogTitle>Nouveau client</DialogTitle>
@@ -225,14 +230,16 @@ export default function ClientsPage() {
                       <p className="text-xs text-[#8896b4] font-mono mt-0.5">{client.code}</p>
                     )}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setDeleteTarget(client)}
-                    className="text-[#8896b4] hover:text-red-400 shrink-0"
-                    aria-label={`Supprimer ${client.name}`}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+                  {canAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => setDeleteTarget(client)}
+                      className="text-[#8896b4] hover:text-red-400 shrink-0"
+                      aria-label={`Supprimer ${client.name}`}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  )}
                 </div>
 
                 <div className="space-y-1.5 text-xs text-[#8896b4]">

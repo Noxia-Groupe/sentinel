@@ -29,11 +29,14 @@ export function WebhookTokenPanel({
   nvrId,
   token,
   reachable,
+  canRotate,
   onRotated,
 }: {
   nvrId: string;
   token: string;
   reachable: boolean;
+  /** Réservé aux administrateurs : invalide l'URL en service. */
+  canRotate: boolean;
   onRotated: () => void;
 }) {
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -88,25 +91,28 @@ export function WebhookTokenPanel({
         <Button variant="outline" size="icon" className="border-[#132255] text-[#8896b4]" onClick={copy}>
           <Copy className="h-4 w-4" />
         </Button>
-        <Button
-          variant="outline"
-          size="icon"
-          className="border-[#132255] text-[#8896b4]"
-          title="Régénérer le jeton"
-          disabled={busy}
-          onClick={() => setConfirmOpen(true)}
-        >
-          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-        </Button>
+        {canRotate && (
+          <Button
+            variant="outline"
+            size="icon"
+            className="border-[#132255] text-[#8896b4]"
+            title="Régénérer le jeton"
+            disabled={busy}
+            onClick={() => setConfirmOpen(true)}
+          >
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+          </Button>
+        )}
       </div>
 
       {legacy && (
         <p className="flex items-start gap-2 text-xs text-amber-400 border border-amber-500/20 bg-amber-500/5 rounded-lg p-3">
           <AlertTriangle className="h-4 w-4 shrink-0" />
           <span>
-            Jeton de l&apos;ancienne génération, en partie prévisible : le régénérer dès que
-            l&apos;enregistreur est joignable. La nouvelle adresse est écrite automatiquement sur
-            l&apos;équipement.
+            Jeton de l&apos;ancienne génération, en partie prévisible :{" "}
+            {canRotate
+              ? "le régénérer dès que l'enregistreur est joignable. La nouvelle adresse est écrite automatiquement sur l'équipement."
+              : "demander à un administrateur de le régénérer."}
           </span>
         </p>
       )}

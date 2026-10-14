@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireUser } from "@/lib/session";
+import { requireOperator, requireUser } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { encrypt } from "@/lib/crypto";
 import { recordAudit } from "@/lib/audit";
 import { generateWebhookToken } from "@/lib/webhook-token";
+import { checkNvrHost } from "@/lib/nvr-address";
 
 type CredentialInput = { type?: string; username?: string; password?: string; label?: string };
 
@@ -44,7 +45,7 @@ export async function GET(req: NextRequest) {
 
 // POST /api/nvrs — Déclare un enregistreur
 export async function POST(req: NextRequest) {
-  const guard = await requireUser(req);
+  const guard = await requireOperator(req);
   if (!guard.ok) return guard.response;
 
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
@@ -67,6 +68,10 @@ export async function POST(req: NextRequest) {
       { error: "Le numéro de série P2P est requis en mode P2P" },
       { status: 400 },
     );
+  }
+  if (connectionMode === "ip") {
+    const check = checkNvrHost(ip);
+    if (!check.ok) return NextResponse.json({ error: check.error }, { status: 400 });
   }
 
   const credentials = Array.isArray(body.credentials)

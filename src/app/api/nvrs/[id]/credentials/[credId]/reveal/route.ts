@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireUser } from "@/lib/session";
-import { revealCredential } from "@/lib/credentials";
+import { requireAdmin } from "@/lib/session";
+import { RevealQuotaError, revealCredential } from "@/lib/credentials";
 
 // POST /api/nvrs/[id]/credentials/[credId]/reveal — Affiche un mot de passe en clair
 //
@@ -10,7 +10,7 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string; credId: string }> },
 ) {
-  const guard = await requireUser(req);
+  const guard = await requireAdmin(req);
   if (!guard.ok) return guard.response;
 
   const { id, credId } = await params;
@@ -30,6 +30,12 @@ export async function POST(
 
     return NextResponse.json(credential);
   } catch (error) {
+    if (error instanceof RevealQuotaError) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: 429, headers: { "Retry-After": String(error.retryAfter) } },
+      );
+    }
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Déchiffrement impossible" },
       { status: 500 },

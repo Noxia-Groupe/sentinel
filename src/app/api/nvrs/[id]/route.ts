@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireUser } from "@/lib/session";
+import { requireAdmin, requireOperator, requireUser } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { recordAudit } from "@/lib/audit";
 import { isReachable } from "@/lib/dahua/service";
 import { p2pStatus } from "@/lib/dahua/p2p";
+import { checkNvrHost } from "@/lib/nvr-address";
+
+const NVR_STATUSES = new Set(["unknown", "online", "offline"]);
 
 // GET /api/nvrs/[id] — Détail d'un enregistreur
 //
@@ -72,11 +75,16 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
 // PUT /api/nvrs/[id] — Met à jour un enregistreur
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requireUser(req);
+  const guard = await requireOperator(req);
   if (!guard.ok) return guard.response;
 
   const { id } = await params;
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+
+  if (typeof body.ip === "string" && body.ip.trim()) {
+    const check = checkNvrHost(body.ip);
+    if (!check.ok) return NextResponse.json({ error: check.error }, { status: 400 });
+  }
 
   const nvr = await prisma.nvr.update({
     where: { id },
@@ -94,7 +102,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       ...(body.model !== undefined ? { model: asString(body.model) } : {}),
       ...(body.location !== undefined ? { location: asString(body.location) } : {}),
       ...(body.notes !== undefined ? { notes: asString(body.notes) } : {}),
-      ...(typeof body.status === "string" ? { status: body.status } : {}),
+      ...(typeof body.status === "string" && NVR_STATUSES.has(body.status) ? { status: body.status } : {}),
       ...(body.connectionMode === "ip" || body.connectionMode === "p2p"
         ? { connectionMode: body.connectionMode }
         : {}),
@@ -114,7 +122,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
 // DELETE /api/nvrs/[id] — Supprime un enregistreur et son historique
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requireUser(req);
+  const guard = await requireAdmin(req);
   if (!guard.ok) return guard.response;
 
   const { id } = await params;

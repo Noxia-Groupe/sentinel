@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireScope, apiError } from "@/lib/api/guard";
-import { revealCredential } from "@/lib/credentials";
+import { RevealQuotaError, revealCredential } from "@/lib/credentials";
 
 /**
  * POST /api/v1/nvrs/[id]/credentials/[credId]/reveal — Mot de passe en clair.
@@ -33,6 +33,9 @@ export async function POST(
 
     return NextResponse.json(credential);
   } catch (error) {
+    if (error instanceof RevealQuotaError) {
+      return apiError(429, "rate_limited", error.message, { retryAfter: error.retryAfter });
+    }
     return apiError(
       500,
       "decrypt_failed",

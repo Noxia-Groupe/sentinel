@@ -8,8 +8,10 @@ services:
       POSTGRES_DB: sentinel
     volumes:
       - sentinel_pgdata:/var/lib/postgresql/data
+    # Réseau interne uniquement : la base n'est joignable que par l'application,
+    # jamais par les autres conteneurs du réseau du reverse proxy.
     networks:
-      - nginx-proxy
+      - sentinel-internal
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U sentinel"]
       interval: 10s
@@ -57,12 +59,21 @@ services:
       WEBHOOK_RATE_LIMIT: ${WEBHOOK_RATE_LIMIT:-}
       WEBHOOK_UNKNOWN_TOKEN_RATE_LIMIT: ${WEBHOOK_UNKNOWN_TOKEN_RATE_LIMIT:-}
       WEBHOOK_MAX_BODY_BYTES: ${WEBHOOK_MAX_BODY_BYTES:-}
+      # Durée de vie d'une session inactive, en heures (12 par défaut).
+      SESSION_MAX_AGE_HOURS: ${SESSION_MAX_AGE_HOURS:-}
+      # Plages IPv4 autorisées pour les enregistreurs (vide = tout sauf les
+      # adresses réservées et le réseau interne de la plateforme).
+      NVR_ALLOWED_CIDRS: ${NVR_ALLOWED_CIDRS:-}
     networks:
+      - sentinel-internal
       - nginx-proxy
 
 volumes:
   sentinel_pgdata:
 
 networks:
+  # Base ↔ application, sans accès extérieur.
+  sentinel-internal:
+    internal: true
   nginx-proxy:
     external: true

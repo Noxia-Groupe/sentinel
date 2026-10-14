@@ -39,7 +39,7 @@ model AccessEntry {
   id            String    @id @default(cuid())
   email         String    @unique // toujours en minuscules
   name          String?
-  role          String    @default("user") // "user" | "superadmin"
+  role          String    @default("operator") // "viewer" | "operator" | "admin" | "superadmin"
   status        String    @default("pending") // "authorized" | "banned" | "pending"
   note          String?
   addedBy       String?

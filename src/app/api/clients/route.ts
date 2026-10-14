@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireUser } from "@/lib/session";
+import { requireOperator, requireUser } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { recordAudit } from "@/lib/audit";
 
@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
 
 // POST /api/clients — Crée une fiche client
 export async function POST(req: NextRequest) {
-  const guard = await requireUser(req);
+  const guard = await requireOperator(req);
   if (!guard.ok) return guard.response;
 
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;

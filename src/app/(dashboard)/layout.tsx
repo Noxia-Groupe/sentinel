@@ -22,6 +22,8 @@ import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ACCESS_DENIED_PATH, auth, signOut } from "@/lib/auth";
 import { OrizonLabCredit, SentinelLogo } from "@/components/brand/sentinel-logo";
+import { RoleProvider } from "@/components/role-context";
+import { normalizeRole } from "@/lib/access";
 
 export const metadata: Metadata = {
   title: "Sentinel — Centre de contrôle",
@@ -57,6 +59,7 @@ export default async function DashboardLayout({
     session.user.role === "superadmin" ? [...navigation, ...superadminNavigation] : navigation;
 
   return (
+    <RoleProvider role={normalizeRole(session.user.role)}>
     <TooltipProvider>
       <div className="flex min-h-screen bg-[#000726] text-[#dde1e4]">
         {/* Sidebar Desktop */}
@@ -164,5 +167,6 @@ export default async function DashboardLayout({
         </main>
       </div>
     </TooltipProvider>
+    </RoleProvider>
   );
 }

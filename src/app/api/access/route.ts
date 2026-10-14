@@ -3,6 +3,7 @@ import { requireSuperadmin } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { recordAudit } from "@/lib/audit";
 import {
+  DEFAULT_ROLE,
   bootstrapSuperadmins,
   isAccessRole,
   isBootstrapSuperadmin,
@@ -47,7 +48,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const role = isAccessRole(body.role) ? body.role : "user";
+  const role = isAccessRole(body.role) ? body.role : DEFAULT_ROLE;
   const name = typeof body.name === "string" && body.name.trim() ? body.name.trim() : undefined;
   const note = typeof body.note === "string" && body.note.trim() ? body.note.trim() : undefined;
 

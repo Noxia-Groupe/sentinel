@@ -262,6 +262,26 @@ function substitute(token: string, values: Record<string, string>): string {
   return token.replace(/\{(\w+)\}/g, (whole, key: string) => values[key] ?? whole);
 }
 
+/**
+ * Environnement transmis à l'utilitaire : le strict nécessaire, jamais les
+ * secrets de la plateforme (clé de chiffrement, secret de session, accès à la
+ * base…) — l'utilitaire parle au cloud Dahua et à l'équipement, pas à nous.
+ */
+const HELPER_PASSTHROUGH = ["PATH", "HOME", "TZ", "TMPDIR", "SSL_CERT_FILE", "SSL_CERT_DIR", "DAHUA_P2P_RELAY"];
+
+function helperEnv(extra: Record<string, string>): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    NODE_ENV: process.env.NODE_ENV,
+    PATH: "/usr/local/bin:/usr/bin:/bin",
+    HOME: "/tmp",
+  };
+  for (const name of HELPER_PASSTHROUGH) {
+    const value = process.env[name];
+    if (value) env[name] = value;
+  }
+  return { ...env, ...extra };
+}
+
 /** Réserve un port libre en le faisant attribuer par le noyau. */
 function allocatePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -449,8 +469,7 @@ async function establishTunnel(
   }
 
   const child = spawn(command, args, {
-    env: {
-      ...process.env,
+    env: helperEnv({
       DAHUA_P2P_SERIAL: options.serial,
       DAHUA_P2P_USERNAME: options.username,
       DAHUA_P2P_PASSWORD: options.password,
@@ -459,7 +478,7 @@ async function establishTunnel(
       // Profil applicatif et type de canal de cette tentative (voir variantOrder).
       DAHUA_P2P_PROFILE: variant.profile,
       DAHUA_P2P_AUTH: variant.auth === "none" ? "none" : "",
-    },
+    }),
     stdio: ["ignore", "pipe", "pipe"],
   });
 
@@ -597,10 +616,10 @@ function probeCloud(serial: string, profile: string): Promise<P2pProfileDiagnost
       return;
     }
     // Aucun identifiant dans l'environnement : la requête d'information n'en a pas besoin.
-    const env = { ...process.env };
-    delete env.DAHUA_P2P_USERNAME;
-    delete env.DAHUA_P2P_PASSWORD;
-    const child = spawn(binary, [serial, "--info", "--app", profile], { env, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(binary, [serial, "--info", "--app", profile], {
+      env: helperEnv({}),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     let output = "";
     const append = (chunk: Buffer) => {
       output = (output + chunk.toString("utf8")).slice(-4000);

@@ -90,10 +90,21 @@ plateforme* :
 Une adresse refusée arrive sur une page « Accès non autorisé » qui invite à se
 rapprocher de son responsable systèmes (même message quel que soit le motif).
 
+Quatre rôles, chacun incluant les précédents :
+
 | Rôle | Droits |
 | --- | --- |
-| **Utilisateur** | Tout voir et tout faire (alarmes, enregistreurs, clients, interventions), **sauf les paramètres** |
-| **Superadmin** | Tout, y compris les paramètres : liste d'accès, clés d'API, journal d'audit |
+| **Lecture** (`viewer`) | Consulter le parc, les clients et les alarmes ; traiter les alarmes (prise en compte, clôture, main courante) |
+| **Opérateur** (`operator`) | Déclarer et modifier les enregistreurs, les clients et les comptes ; tester les accès ; interventions de lecture et mise à l'heure ; direct vidéo ; diagnostic P2P |
+| **Administrateur** (`admin`) | Mots de passe en clair, suppressions, redémarrage, alimentation PoE, relais, centre d'alarme, jeton de webhook |
+| **Superadmin** | Tout, y compris les paramètres : liste d'accès, clés d'API, webhooks sortants, supervision, journal d'audit |
+
+Les nouvelles autorisations sont **opérateur** par défaut. Les comptes créés
+avant les rôles détaillés (ancien rôle « utilisateur », tout sauf les
+paramètres) sont devenus **administrateurs**, aux droits équivalents : le
+superadmin les ramène au rôle qui convient depuis la liste d'accès. La
+révélation d'un mot de passe est en outre limitée à
+`CREDENTIAL_REVEAL_LIMIT_PER_HOUR` par heure et par compte (10 par défaut).
 
 Les adresses de `ADMIN_EMAILS` (séparées par des virgules) sont **superadmins
 d'office** : c'est l'amorçage de la plateforme, elles ne sont ni modifiables ni
@@ -103,9 +114,18 @@ chaque requête : un changement s'applique sans attendre l'expiration de la
 session. Toutes les modifications sont tracées dans le journal d'audit.
 
 > La liste d'accès repose sur l'adresse e-mail transmise par Entra ID.
-> Renseigner `AUTH_MICROSOFT_ENTRA_ID_ISSUER` avec le **tenant ID** de
-> l'organisation (plutôt que `common`) garantit que ces adresses sont gérées
-> par l'annuaire de l'entreprise.
+> `AUTH_MICROSOFT_ENTRA_ID_ISSUER` **doit** désigner le tenant de
+> l'organisation (`https://login.microsoftonline.com/<tenant ID>/v2.0`) : sans
+> cela, toute connexion est refusée et une erreur est consignée au démarrage.
+> Le jeton d'identité est en plus vérifié contre ce tenant à chaque connexion.
+> Les demandes d'accès en attente sont plafonnées (`ACCESS_PENDING_MAX`, 50 par
+> défaut) et oubliées après 30 jours sans suite.
+>
+> Côté Entra ID, exiger l'**authentification multifacteur** pour cette
+> application (stratégie d'accès conditionnel) : SENTINEL ne gère pas de second
+> facteur lui-même. Une session inactive expire au bout de
+> `SESSION_MAX_AGE_HOURS` (12 h par défaut) ; les jetons OAuth ne sont pas
+> conservés en base.
 
 ## Centralisation des alarmes
 
@@ -668,9 +688,21 @@ y compris après résolution DNS au moment de l'envoi.
   sont signés (HMAC-SHA256) avec un secret chiffré en base.
 - L'accès à l'interface est limité à une liste d'adresses gérée par le
   superadmin (autoriser, bannir, rôle) — voir *Accès et rôles*.
-- Sentinel se connecte aux adresses IP déclarées dans l'inventaire : ces
-  équipements étant sur des réseaux privés ou des VPN, l'ajout d'un
-  enregistreur reste une opération réservée aux utilisateurs authentifiés.
+- Sentinel se connecte aux adresses déclarées dans l'inventaire (rôle
+  opérateur au minimum). Les réseaux privés et les VPN sont permis, mais
+  jamais la boucle locale, le lien local, le multicast ni le réseau interne de
+  la plateforme (base, proxy) ; `NVR_ALLOWED_CIDRS` restreint en plus aux
+  plages listées. Un nom d'hôte est résolu au moment de la connexion et c'est
+  l'adresse résolue, vérifiée, qui est contactée.
+- Les routes de l'interface refusent les requêtes modifiantes venues d'une
+  autre origine, sous-domaines compris (`Sec-Fetch-Site` / `Origin`), en plus
+  du cookie `SameSite`. `src/proxy.ts` exige un cookie de session pour tout ce
+  qui n'est pas public par conception (connexion, webhook, API des agents).
+- L'application pose elle-même ses en-têtes de sécurité (CSP, HSTS,
+  `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`), sans dépendre
+  du reverse proxy.
+- `dh-fwd` et `ffmpeg` reçoivent un environnement minimal : aucun secret de la
+  plateforme n'est transmis aux processus enfants.
 - Le webhook Dahua, seule route sans session, est protégé par un token
   aléatoire de 192 bits, une limitation de débit par enregistreur et par IP,
   et une taille de corps bornée — voir *Centralisation des alarmes*.
@@ -711,7 +743,9 @@ Toutes les migrations sont rejouées à chaque démarrage : elles sont écrites 
 façon **idempotente** (`IF NOT EXISTS`, contraintes ajoutées sous condition).
 
 Le service applicatif n'expose aucun port : il est publié par Nginx Proxy
-Manager via le réseau externe `nginx-proxy`.
+Manager via le réseau externe `nginx-proxy`. PostgreSQL n'est attaché qu'au
+réseau interne `sentinel-internal` (sans accès extérieur) : seule
+l'application le joint, jamais les autres conteneurs du réseau du proxy.
 
 ### Réglages conseillés dans Nginx Proxy Manager
 

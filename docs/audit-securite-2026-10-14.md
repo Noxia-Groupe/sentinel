@@ -368,3 +368,29 @@ Après P0 : note estimée **68 / 100**. Après P0 + P1 : **82 / 100**. Après P2
 **Reste à faire côté infrastructure (hors dépôt)** : dans Nginx Proxy Manager, `limit_req` sur `/api/webhooks/`, `client_max_body_size 64k` sur cette location, `location /_next/image { return 404; }`, HSTS. Les extraits sont dans le README, section *Déploiement*.
 
 **Note estimée après P0 : 68 / 100.** Les paliers P1 (rôles, validation des adresses NVR, sessions, en-têtes, réseau interne) et P2 restent à traiter.
+
+---
+
+## 9. Corrections appliquées — palier P1 (14 octobre 2026)
+
+| Constat | Correction livrée |
+|---|---|
+| V3 | Quatre rôles (`viewer` < `operator` < `admin` < `superadmin`, `src/lib/access.ts`) et gardes `requireRole`/`requireOperator`/`requireAdmin` (`src/lib/session.ts`) appliqués route par route : lecture et traitement des alarmes à tous ; déclaration, modification, tests, direct et interventions de lecture à l'opérateur ; révélation des mots de passe, suppressions, reboot/PoE/relais, centre d'alarme et rotation du jeton à l'administrateur. Migration `20261014150000_access_roles` : l'ancien `user` devient `admin` (droits équivalents, aucun blocage le jour du déploiement), défaut `operator` pour les nouvelles autorisations. Interface : sélecteur de rôle dans la liste d'accès, boutons masqués selon le rôle (la décision reste serveur). Quota de **10 révélations/heure** par compte ou clé (`CREDENTIAL_REVEAL_LIMIT_PER_HOUR`), tracé dans l'audit, réponse 429. `configure-alarm-center` refuse désormais de forcer les champs d'adresse (URL, hôte, port, chemin) calculés par SENTINEL. MFA : à exiger côté Entra (accès conditionnel), documenté. |
+| V5 | `src/lib/nvr-address.ts` : adresse validée à la saisie (`POST/PUT /api/nvrs`) et à chaque connexion (`resolveTarget`, direct vidéo, supervision) ; refus de la boucle locale, de l'adresse nulle, du lien local, du multicast, des sous-réseaux Docker du conteneur et des noms réservés (`localhost`, `sentinel-db`…) ; liste blanche facultative `NVR_ALLOWED_CIDRS` ; nom d'hôte résolu une fois et adresse résolue vérifiée avant connexion (pas de substitution DNS). Statut d'un NVR borné à `unknown|online|offline`. |
+| V6 | Sessions : `maxAge` **12 h** d'inactivité (`SESSION_MAX_AGE_HOURS`), prolongées à l'usage. Jetons OAuth (`access_token`, `refresh_token`, `id_token`) non stockés (adaptateur enveloppé) et effacés en base par la migration. |
+| V7 | Issuer Entra avec GUID de tenant **obligatoire** : sinon toute connexion est refusée et une erreur est consignée au démarrage (`instrumentation.ts`). La revendication `tid` du jeton est comparée au tenant attendu à chaque connexion. Demandes en attente plafonnées à 50 (`ACCESS_PENDING_MAX`), purgées après 30 jours, nom affiché borné. |
+| V8 | MCP : lot JSON-RPC limité à 10 messages, chaque message décompté dans la limitation de débit, exécution séquentielle. |
+| V9 | `next.config.ts` : CSP (`default-src 'self'`, pas de domaine tiers, `frame-ancestors 'none'`, `object-src 'none'`), HSTS 2 ans, `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy`, `Permissions-Policy`, `Cross-Origin-Opener-Policy`. `'unsafe-inline'` reste nécessaire aux scripts d'hydratation de Next.js (pas de nonce) ; `'unsafe-eval'` uniquement hors production. |
+| V10 | `requireUser` refuse toute requête modifiante dont `Sec-Fetch-Site` n'est pas `same-origin` ou dont l'`Origin` n'est pas celle de la plateforme : un sous-domaine compromis ne peut plus forger de requête. Les clients sans ces en-têtes (outils en ligne de commande) restent acceptés. |
+| V11 | `docker-compose.yml` : réseau `sentinel-internal` (`internal: true`) entre la base et l'application ; la base n'est plus sur `nginx-proxy`. |
+| V12 | `dh-fwd` et `ffmpeg` reçoivent un environnement minimal (`PATH`, `HOME`, `TZ`, certificats, `DAHUA_P2P_*`) : plus aucun secret de la plateforme dans les processus enfants. |
+| V13 | `src/proxy.ts` : refus par défaut — sans cookie de session, 401 sur `/api/*` et redirection vers la connexion ailleurs, hors routes publiques par conception (`/api/auth`, `/api/webhooks/dahua`, `/api/v1`, `/api/mcp`, `/auth`). Contrôle optimiste ; les gardes par route restent la décision. |
+
+**Écarts et points d'attention.**
+
+- Les comptes existants deviennent `admin` et non `operator` : c'est le superadmin qui ramène chacun au rôle utile (la liste d'accès le permet en un clic). Un rétrogradage automatique aurait pu bloquer une intervention en cours.
+- La CSP ne pose pas de nonce : `'unsafe-inline'` sur `script-src` limite la protection contre une XSS déjà présente, mais interdit tout script tiers. Un passage aux nonces (via `proxy.ts`) est possible plus tard.
+- Au premier déploiement, vérifier que `AUTH_MICROSOFT_ENTRA_ID_ISSUER` contient bien le GUID du tenant : à défaut, personne ne peut se connecter (comportement voulu, signalé dans les journaux).
+- Le réseau `sentinel-internal` est créé par `docker compose up` ; la base change de réseau, les deux conteneurs redémarrent.
+
+**Note estimée après P0 + P1 : 82 / 100.** Reste le palier P2 (épinglage TLS des NVR, durcissement du conteneur, `.dockerignore`, migrations strictes, SBOM, validation de `ENCRYPTION_KEY` et versionnage des chiffrés, plafonds d'opérations P2P, webhooks sortants).

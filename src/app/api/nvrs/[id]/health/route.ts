@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireUser } from "@/lib/session";
+import { requireOperator, requireUser } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { recordAudit } from "@/lib/audit";
 import { checkNvr, nvrHealth } from "@/lib/supervision";
@@ -18,7 +18,7 @@ export async function GET(req: NextRequest, { params }: Params) {
 
 // POST /api/nvrs/[id]/health — Vérification immédiate (même contrôle que la supervision)
 export async function POST(req: NextRequest, { params }: Params) {
-  const guard = await requireUser(req);
+  const guard = await requireOperator(req);
   if (!guard.ok) return guard.response;
 
   const { id } = await params;
@@ -39,7 +39,7 @@ export async function POST(req: NextRequest, { params }: Params) {
 
 // PATCH /api/nvrs/[id]/health — Inclut ou exclut l'enregistreur de la supervision
 export async function PATCH(req: NextRequest, { params }: Params) {
-  const guard = await requireUser(req);
+  const guard = await requireOperator(req);
   if (!guard.ok) return guard.response;
 
   const { id } = await params;

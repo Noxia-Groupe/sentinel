@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireUser } from "@/lib/session";
+import { requireUser, roleForbidden } from "@/lib/session";
+import { roleAtLeast } from "@/lib/access";
 import { loadNvr, statusForReason } from "@/lib/dahua/service";
-import { executeNvrAction, isNvrAction, NVR_ACTIONS } from "@/lib/dahua/actions";
+import { executeNvrAction, isNvrAction, NVR_ACTIONS, requiredRoleForAction } from "@/lib/dahua/actions";
 
 // GET /api/nvrs/[id]/actions — Catalogue des interventions disponibles
 export async function GET(req: NextRequest) {
@@ -15,6 +16,9 @@ export async function GET(req: NextRequest) {
 
 // POST /api/nvrs/[id]/actions — Exécute une intervention à distance
 // Corps : { action: string, credentialId?: string, params?: object }
+//
+// Lectures et mise à l'heure : opérateur ; tout ce qui coupe, relance ou
+// reconfigure l'équipement : administrateur (voir requiredRoleForAction).
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const guard = await requireUser(req);
   if (!guard.ok) return guard.response;
@@ -34,6 +38,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       { status: 400 },
     );
   }
+
+  const minimum = requiredRoleForAction(body.action);
+  if (!roleAtLeast(guard.role, minimum)) return roleForbidden(minimum);
 
   const nvr = await loadNvr((await params).id);
   if (!nvr) return NextResponse.json({ error: "NVR non trouvé" }, { status: 404 });

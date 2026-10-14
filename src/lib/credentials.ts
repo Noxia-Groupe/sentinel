@@ -2,6 +2,7 @@ import { prisma } from "./prisma";
 import { decrypt } from "./crypto";
 import { recordAudit } from "./audit";
 import type { Actor } from "./actor";
+import { revealLimiter } from "./rate-limit";
 
 /**
  * Lecture d'un mot de passe enregistré.
@@ -10,6 +11,19 @@ import type { Actor } from "./actor";
  * pour garantir qu'aucune lecture n'échappe au journal d'audit, qu'elle vienne
  * de l'interface ou d'une clé d'API.
  */
+/** Quota horaire de révélations atteint : à renvoyer en 429. */
+export class RevealQuotaError extends Error {
+  constructor(
+    readonly retryAfter: number,
+    readonly limit: number,
+  ) {
+    super(
+      `Quota de révélations atteint (${limit} par heure) — réessayer dans ${Math.max(1, Math.ceil(retryAfter / 60))} min`,
+    );
+    this.name = "RevealQuotaError";
+  }
+}
+
 export async function revealCredential(options: {
   nvrId: string;
   credentialId: string;
@@ -25,6 +39,20 @@ export async function revealCredential(options: {
   });
 
   if (!credential) return null;
+
+  // Quota par acteur : un compte ou une clé compromis ne vide pas le coffre.
+  const rate = revealLimiter.check(`${actor.type}:${actor.id ?? actor.label}`);
+  if (!rate.allowed) {
+    await recordAudit({
+      actor,
+      action: "credential.reveal",
+      targetType: "credential",
+      targetId: credentialId,
+      success: false,
+      metadata: { nvrId, reason, error: "quota atteint", limit: rate.limit },
+    });
+    throw new RevealQuotaError(rate.retryAfter, rate.limit);
+  }
 
   let password: string;
   try {

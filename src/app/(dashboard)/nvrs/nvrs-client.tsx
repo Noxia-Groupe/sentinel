@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useCan } from "@/components/role-context";
 import {
   Plus,
   Search,
@@ -114,6 +115,8 @@ export function NvrsClient() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
+  const canOperate = useCan("operator");
+  const canAdmin = useCan("admin");
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [clientFilter, setClientFilter] = useState<string | null>(searchParams.get("clientId"));
 
@@ -229,10 +232,12 @@ export function NvrsClient() {
           <p className="text-[#8896b4] mt-1 text-sm">Gérez vos NVR Dahua et leurs accès</p>
         </div>
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-          <DialogTrigger className="inline-flex items-center gap-2 rounded-lg bg-[#0251a1] hover:bg-[#0363c2] text-white font-medium text-sm px-4 py-2.5 transition-all duration-200 hover:shadow-lg hover:shadow-[#0251a1]/25">
-            <Plus className="h-4 w-4" />
-            Ajouter un NVR
-          </DialogTrigger>
+          {canOperate && (
+            <DialogTrigger className="inline-flex items-center gap-2 rounded-lg bg-[#0251a1] hover:bg-[#0363c2] text-white font-medium text-sm px-4 py-2.5 transition-all duration-200 hover:shadow-lg hover:shadow-[#0251a1]/25">
+              <Plus className="h-4 w-4" />
+              Ajouter un NVR
+            </DialogTrigger>
+          )}
           <DialogContent className="sm:max-w-md border-[#132255] bg-[#0d1537] text-[#dde1e4]">
             <DialogHeader>
               <DialogTitle>Nouvel enregistreur</DialogTitle>
@@ -545,11 +550,15 @@ export function NvrsClient() {
                             <Copy className="mr-2 h-4 w-4" />
                             Copier URL webhook
                           </DropdownMenuItem>
-                          <DropdownMenuSeparator className="bg-[#132255]" />
-                          <DropdownMenuItem className="text-red-400" onClick={() => setDeleteId(nvr.id)}>
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            Supprimer
-                          </DropdownMenuItem>
+                          {canAdmin && (
+                            <>
+                              <DropdownMenuSeparator className="bg-[#132255]" />
+                              <DropdownMenuItem className="text-red-400" onClick={() => setDeleteId(nvr.id)}>
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                Supprimer
+                              </DropdownMenuItem>
+                            </>
+                          )}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </TableCell>

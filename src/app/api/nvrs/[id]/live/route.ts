@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireUser } from "@/lib/session";
+import { requireOperator } from "@/lib/session";
 import { recordAudit } from "@/lib/audit";
 import { loadNvr, pickCredential, statusForReason } from "@/lib/dahua/service";
 import { DahuaError } from "@/lib/dahua/http";
@@ -11,7 +11,7 @@ import { LIVE_BOUNDARY, openLiveStream } from "@/lib/dahua/live";
  * la connexion est coupée dès que la page est quittée.
  */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requireUser(req);
+  const guard = await requireOperator(req);
   if (!guard.ok) return guard.response;
 
   const channel = Number(new URL(req.url).searchParams.get("channel") ?? 1);

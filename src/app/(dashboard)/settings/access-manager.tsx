@@ -27,7 +27,8 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 
-type Role = "user" | "superadmin";
+type Role = "viewer" | "operator" | "admin" | "superadmin";
+const ROLES: Role[] = ["viewer", "operator", "admin", "superadmin"];
 type Status = "authorized" | "banned" | "pending";
 
 type Entry = {
@@ -44,7 +45,19 @@ type Entry = {
   locked: boolean;
 };
 
-const ROLE_LABELS: Record<Role, string> = { user: "Utilisateur", superadmin: "Superadmin" };
+const ROLE_LABELS: Record<Role, string> = {
+  viewer: "Lecture",
+  operator: "Opérateur",
+  admin: "Administrateur",
+  superadmin: "Superadmin",
+};
+
+const ROLE_HINTS: Record<Role, string> = {
+  viewer: "Consulte le parc, traite les alarmes",
+  operator: "Déclare, teste, interventions sans conséquence, direct",
+  admin: "Mots de passe, suppressions, redémarrages, centre d'alarme",
+  superadmin: "Tout, paramètres compris",
+};
 
 function formatDate(value: string | null): string {
   return value
@@ -62,7 +75,7 @@ export function AccessManager({ currentEmail }: { currentEmail: string }) {
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [note, setNote] = useState("");
-  const [role, setRole] = useState<Role>("user");
+  const [role, setRole] = useState<Role>("operator");
 
   const self = currentEmail.trim().toLowerCase();
 
@@ -100,7 +113,7 @@ export function AccessManager({ currentEmail }: { currentEmail: string }) {
       setEmail("");
       setName("");
       setNote("");
-      setRole("user");
+      setRole("operator");
       await load();
     } finally {
       setBusy(null);
@@ -200,7 +213,7 @@ export function AccessManager({ currentEmail }: { currentEmail: string }) {
               <div className="space-y-2">
                 <Label className="text-[#8896b4] text-xs">Rôle</Label>
                 <div className="grid grid-cols-2 gap-2">
-                  {(["user", "superadmin"] as const).map((value) => (
+                  {ROLES.map((value) => (
                     <button
                       key={value}
                       type="button"
@@ -213,7 +226,7 @@ export function AccessManager({ currentEmail }: { currentEmail: string }) {
                     >
                       <span className="font-medium">{ROLE_LABELS[value]}</span>
                       <span className="block text-[11px] text-[#8896b4]">
-                        {value === "user" ? "Tout, sauf les paramètres" : "Tout, paramètres compris"}
+                        {ROLE_HINTS[value]}
                       </span>
                     </button>
                   ))}
@@ -265,7 +278,7 @@ export function AccessManager({ currentEmail }: { currentEmail: string }) {
                         <ActionButton
                           disabled={busy === entry.id}
                           onClick={() =>
-                            void update(entry, { status: "authorized", role: "user" }, `${entry.email} est autorisé`)
+                            void update(entry, { status: "authorized", role: "operator" }, `${entry.email} est autorisé (opérateur)`)
                           }
                           icon={<UserCheck className="h-3.5 w-3.5" />}
                           tone="positive"
@@ -346,21 +359,25 @@ export function AccessManager({ currentEmail }: { currentEmail: string }) {
                           </ActionButton>
                         ) : (
                           <>
-                            <ActionButton
-                              disabled={busy === entry.id}
-                              onClick={() =>
-                                void update(
-                                  entry,
-                                  { role: entry.role === "superadmin" ? "user" : "superadmin" },
-                                  entry.role === "superadmin"
-                                    ? `${entry.email} passe utilisateur`
-                                    : `${entry.email} devient superadmin`,
-                                )
-                              }
-                              icon={<UserCog className="h-3.5 w-3.5" />}
-                            >
-                              {entry.role === "superadmin" ? "Passer utilisateur" : "Passer superadmin"}
-                            </ActionButton>
+                            <label className="inline-flex items-center gap-1.5 text-xs text-[#8896b4]">
+                              <UserCog className="h-3.5 w-3.5" />
+                              <select
+                                value={ROLES.includes(entry.role) ? entry.role : "admin"}
+                                disabled={busy === entry.id}
+                                onChange={(event) => {
+                                  const next = event.target.value as Role;
+                                  void update(entry, { role: next }, `${entry.email} : rôle ${ROLE_LABELS[next]}`);
+                                }}
+                                className="rounded-md border border-[#132255] bg-[#080d24] px-2 py-1 text-xs text-[#dde1e4]"
+                                aria-label={`Rôle de ${entry.email}`}
+                              >
+                                {ROLES.map((value) => (
+                                  <option key={value} value={value}>
+                                    {ROLE_LABELS[value]}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
                             <ActionButton
                               disabled={busy === entry.id}
                               onClick={() => ban(entry)}
@@ -426,7 +443,7 @@ function RoleBadge({ role }: { role: Role }) {
     </span>
   ) : (
     <span className="inline-flex items-center rounded-full border border-[#132255] bg-[#0a1130] px-2 py-0.5 text-xs font-medium text-[#dde1e4]">
-      Utilisateur
+      {ROLE_LABELS[role] ?? "Administrateur"}
     </span>
   );
 }

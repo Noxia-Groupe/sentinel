@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireUser } from "@/lib/session";
+import { requireAdmin, requireOperator, requireUser } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { recordAudit } from "@/lib/audit";
 
@@ -33,7 +33,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
 // PUT /api/clients/[id] — Met à jour une fiche client
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requireUser(req);
+  const guard = await requireOperator(req);
   if (!guard.ok) return guard.response;
 
   const { id } = await params;
@@ -65,7 +65,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
 // DELETE /api/clients/[id] — Supprime la fiche (les NVR sont conservés, détachés)
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requireUser(req);
+  const guard = await requireAdmin(req);
   if (!guard.ok) return guard.response;
 
   const { id } = await params;

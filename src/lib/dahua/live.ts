@@ -6,6 +6,7 @@ import type { Nvr, NvrCredential } from "@/generated/prisma/client";
 import { decrypt } from "@/lib/crypto";
 import { DahuaError } from "./http";
 import { openTunnel } from "./p2p";
+import { resolveNvrHost } from "@/lib/nvr-address";
 import { recordTraffic } from "@/lib/traffic";
 
 /**
@@ -143,7 +144,7 @@ export async function openLiveStream(options: {
     release = tunnel.release;
   } else {
     if (!nvr.ip) throw new DahuaError("invalid", "Aucune adresse IP renseignée");
-    host = nvr.ip;
+    host = await resolveNvrHost(nvr.ip);
     port = nvr.rtspPort;
   }
 
@@ -197,7 +198,11 @@ export async function openLiveStream(options: {
       LIVE_BOUNDARY,
       "-",
     ],
-    { stdio: ["ignore", "pipe", "pipe"] },
+    {
+      // ffmpeg n'a besoin d'aucun secret de la plateforme : environnement minimal.
+      env: { NODE_ENV: process.env.NODE_ENV, PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin" },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
   );
 
   let stderr = "";

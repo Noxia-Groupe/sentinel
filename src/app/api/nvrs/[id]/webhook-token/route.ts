@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireUser } from "@/lib/session";
+import { requireAdmin } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { recordAudit } from "@/lib/audit";
 import { loadNvr, runNvrAction, statusForReason } from "@/lib/dahua/service";
@@ -23,7 +23,7 @@ import { generateWebhookToken } from "@/lib/webhook-token";
  * l'enregistreur doit être reconfiguré à la main avec la nouvelle URL.
  */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requireUser(req);
+  const guard = await requireAdmin(req);
   if (!guard.ok) return guard.response;
 
   const { id } = await params;

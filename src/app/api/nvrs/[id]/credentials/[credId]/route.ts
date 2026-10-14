@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireUser } from "@/lib/session";
+import { requireAdmin, requireOperator } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { encrypt } from "@/lib/crypto";
 import { recordAudit } from "@/lib/audit";
@@ -8,7 +8,7 @@ type Params = { params: Promise<{ id: string; credId: string }> };
 
 // PUT /api/nvrs/[id]/credentials/[credId] — Met à jour un compte (rotation de mot de passe)
 export async function PUT(req: NextRequest, { params }: Params) {
-  const guard = await requireUser(req);
+  const guard = await requireOperator(req);
   if (!guard.ok) return guard.response;
 
   const { id, credId } = await params;
@@ -56,7 +56,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
 
 // DELETE /api/nvrs/[id]/credentials/[credId] — Supprime un compte
 export async function DELETE(req: NextRequest, { params }: Params) {
-  const guard = await requireUser(req);
+  const guard = await requireAdmin(req);
   if (!guard.ok) return guard.response;
 
   const { id, credId } = await params;
