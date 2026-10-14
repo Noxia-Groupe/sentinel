@@ -1,14 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireUser } from "@/lib/session";
+import { requireAdmin, requireOperator } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { encrypt } from "@/lib/crypto";
 import { recordAudit } from "@/lib/audit";
+import { LIMITS, clip, isCredentialType } from "@/lib/validate";
 
 type Params = { params: Promise<{ id: string; credId: string }> };
 
 // PUT /api/nvrs/[id]/credentials/[credId] — Met à jour un compte (rotation de mot de passe)
 export async function PUT(req: NextRequest, { params }: Params) {
-  const guard = await requireUser(req);
+  const guard = await requireOperator(req);
   if (!guard.ok) return guard.response;
 
   const { id, credId } = await params;
@@ -20,17 +21,21 @@ export async function PUT(req: NextRequest, { params }: Params) {
   }
 
   const password = typeof body.password === "string" && body.password ? body.password : undefined;
+  if (password && password.length > LIMITS.password) {
+    return NextResponse.json({ error: `Mot de passe trop long (${LIMITS.password} caractères maximum)` }, { status: 400 });
+  }
+  const type = clip(body.type, LIMITS.type);
+  if (type && !isCredentialType(type)) {
+    return NextResponse.json({ error: `Type de compte inconnu : ${type}` }, { status: 400 });
+  }
+  const username = clip(body.username, LIMITS.username);
 
   const updated = await prisma.nvrCredential.update({
     where: { id: credId },
     data: {
-      ...(typeof body.username === "string" && body.username.trim()
-        ? { username: body.username.trim() }
-        : {}),
-      ...(typeof body.type === "string" && body.type.trim() ? { type: body.type.trim() } : {}),
-      ...(body.label !== undefined
-        ? { label: typeof body.label === "string" && body.label.trim() ? body.label.trim() : null }
-        : {}),
+      ...(username ? { username } : {}),
+      ...(type ? { type } : {}),
+      ...(body.label !== undefined ? { label: clip(body.label, LIMITS.label) } : {}),
       ...(password
         ? {
             encryptedPassword: encrypt(password),
@@ -56,7 +61,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
 
 // DELETE /api/nvrs/[id]/credentials/[credId] — Supprime un compte
 export async function DELETE(req: NextRequest, { params }: Params) {
-  const guard = await requireUser(req);
+  const guard = await requireAdmin(req);
   if (!guard.ok) return guard.response;
 
   const { id, credId } = await params;

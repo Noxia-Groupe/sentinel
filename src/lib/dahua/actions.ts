@@ -1,6 +1,7 @@
 import type { Actor } from "@/lib/actor";
 import { DahuaError, type DahuaFailureReason, type DahuaTarget } from "./http";
 import { runNvrAction, type NvrWithCredentials } from "./service";
+import type { AccessRole } from "@/lib/access";
 import {
   DEVICE_TIME_ZONE,
   getAlarmOutState,
@@ -219,6 +220,24 @@ export function isNvrAction(value: unknown): value is NvrActionName {
   return typeof value === "string" && value in NVR_ACTIONS;
 }
 
+/**
+ * Rôle minimal pour lancer une action depuis l'interface : les lectures et la
+ * mise à l'heure (sans conséquence) à l'opérateur, tout ce qui coupe, relance
+ * ou reconfigure l'équipement à l'administrateur.
+ */
+export function requiredRoleForAction(action: NvrActionName): AccessRole {
+  if (NVR_ACTIONS[action].kind !== "control" || action === "sync-time") return "operator";
+  return "admin";
+}
+
+/**
+ * Champs du centre d'alarme calculés par SENTINEL à partir de sa propre
+ * adresse : ils ne peuvent pas être forcés par `fields`, sans quoi un appel
+ * pourrait détourner les alarmes vers un autre serveur.
+ */
+const PROTECTED_ALARM_FIELD_RE = /(^|\.)(url|uri|address|ip|hostip|serverip|host|server|domain|port|path|route)$/i;
+const MAX_OVERRIDE_LENGTH = 255;
+
 export type ActionParams = Record<string, unknown>;
 
 export type ActionOutcome =
@@ -354,10 +373,15 @@ export async function executeNvrAction(options: {
         const fields =
           typeof params.fields === "object" && params.fields !== null
             ? Object.fromEntries(
-                Object.entries(params.fields as Record<string, unknown>).map(([key, value]) => [
-                  key,
-                  String(value),
-                ]),
+                Object.entries(params.fields as Record<string, unknown>).map(([key, value]) => {
+                  if (PROTECTED_ALARM_FIELD_RE.test(key)) {
+                    throw new DahuaError(
+                      "invalid",
+                      `Le champ « ${key} » est calculé à partir de l'adresse de SENTINEL et ne peut pas être forcé`,
+                    );
+                  }
+                  return [key, String(value).slice(0, MAX_OVERRIDE_LENGTH)];
+                }),
               )
             : undefined;
 

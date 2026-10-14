@@ -1,7 +1,8 @@
 import http from "node:http";
 import https from "node:https";
 import crypto from "node:crypto";
-import type net from "node:net";
+import net from "node:net";
+import tls from "node:tls";
 import { recordTraffic } from "@/lib/traffic";
 
 /**
@@ -20,6 +21,15 @@ export type DahuaTarget = {
   password: string;
   /** Délai maximum d'une requête, bornes comprises (défaut : 8 s). */
   timeoutMs?: number;
+  /**
+   * Empreinte SHA-256 (hex) du certificat attendu en HTTPS. Les enregistreurs
+   * présentent un certificat auto-signé : la chaîne n'est pas vérifiable, mais
+   * le certificat vu au premier contact est épinglé, et tout changement est
+   * refusé tant qu'un administrateur ne l'a pas réinitialisé.
+   */
+  tlsFingerprint?: string | null;
+  /** Appelé au premier contact HTTPS, pour mémoriser l'empreinte observée. */
+  onTlsFingerprint?: (fingerprint: string) => Promise<void> | void;
 };
 
 export type DahuaHttpResponse = {
@@ -35,6 +45,7 @@ export type DahuaFailureReason =
   | "forbidden" // compte connu mais droits insuffisants / bloqué
   | "http" // l'équipement répond mais avec un code inattendu
   | "unsupported" // opération impossible dans cette configuration (P2P…)
+  | "tls" // certificat TLS différent de l'empreinte épinglée
   | "invalid"; // configuration incomplète côté SENTINEL
 
 export class DahuaError extends Error {
@@ -113,7 +124,68 @@ function basicHeader(target: DahuaTarget): string {
   return `Basic ${raw}`;
 }
 
-function rawRequest(
+/** Empreintes vérifiées récemment, pour ne pas renégocier à chaque requête. */
+const verifiedPins = new Map<string, { fingerprint: string; at: number }>();
+const PIN_CACHE_MS = 60_000;
+
+/**
+ * Empreinte SHA-256 du certificat présenté par l'hôte, lue sur une connexion
+ * TLS dédiée et refermée aussitôt : aucune donnée applicative n'est envoyée
+ * avant que le certificat ait été comparé à l'empreinte épinglée.
+ */
+function peerFingerprint(target: DahuaTarget): Promise<string> {
+  const timeout = target.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  return new Promise((resolve, reject) => {
+    const socket = tls.connect(
+      {
+        host: target.host,
+        port: target.port,
+        servername: net.isIP(target.host) ? undefined : target.host,
+        rejectUnauthorized: false,
+      },
+      () => {
+        const cert = socket.getPeerCertificate();
+        socket.destroy();
+        const fingerprint = cert?.fingerprint256?.replace(/:/g, "").toLowerCase();
+        if (!fingerprint) {
+          reject(new DahuaError("tls", "Certificat TLS illisible"));
+          return;
+        }
+        resolve(fingerprint);
+      },
+    );
+    socket.setTimeout(timeout, () => {
+      socket.destroy(new DahuaError("unreachable", `Délai dépassé après ${timeout} ms (négociation TLS)`));
+    });
+    socket.on("error", (error: NodeJS.ErrnoException) => {
+      reject(error instanceof DahuaError ? error : new DahuaError("unreachable", describeNetworkError(error)));
+    });
+  });
+}
+
+/** Vérifie (ou épingle au premier contact) le certificat d'un hôte HTTPS. */
+async function assertTlsPin(target: DahuaTarget): Promise<void> {
+  if (!target.useHttps) return;
+  const key = `${target.host}:${target.port}`;
+  const cached = verifiedPins.get(key);
+  const now = Date.now();
+  if (cached && now - cached.at < PIN_CACHE_MS && (!target.tlsFingerprint || cached.fingerprint === target.tlsFingerprint)) {
+    return;
+  }
+  const observed = await peerFingerprint(target);
+  if (target.tlsFingerprint && observed !== target.tlsFingerprint) {
+    throw new DahuaError(
+      "tls",
+      `Certificat TLS inattendu (empreinte ${observed.slice(0, 16)}…) : l'enregistreur a changé de certificat, ` +
+        "ou la connexion est interceptée. Si le changement est légitime, un administrateur doit réinitialiser " +
+        "l'empreinte épinglée depuis la fiche de l'enregistreur.",
+    );
+  }
+  verifiedPins.set(key, { fingerprint: observed, at: now });
+  if (!target.tlsFingerprint && target.onTlsFingerprint) await target.onTlsFingerprint(observed);
+}
+
+async function rawRequest(
   target: DahuaTarget,
   method: string,
   path: string,
@@ -122,6 +194,8 @@ function rawRequest(
 ): Promise<DahuaHttpResponse> {
   const transport = target.useHttps ? https : http;
   const timeout = target.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+
+  await assertTlsPin(target);
 
   return new Promise((resolve, reject) => {
     // Comptage du trafic : octets réellement échangés sur la connexion pendant

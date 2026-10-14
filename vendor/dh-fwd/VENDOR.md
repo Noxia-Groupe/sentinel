@@ -97,3 +97,12 @@ avec les dépendances figées sous `vendor/` (`go build -mod=vendor`). Pour
 mettre à jour depuis l'amont : re-cloner le dépôt au commit voulu, ré-appliquer
 les patches ci-dessus, relancer `go mod vendor`, puis
 `go build -mod=vendor .` et `go test -mod=vendor ./...`.
+
+## Patch SENTINEL : PBKDF2 de la bibliothèque standard
+
+`helpers.go` utilise `crypto/pbkdf2` (Go ≥ 1.24) à la place de
+`golang.org/x/crypto/pbkdf2` ; le module `golang.org/x/crypto` n'est plus
+requis ni vendoré. Seul `pbkdf2` en était utilisé, mais la version du module
+(`v0.17.0`) faisait remonter dans les scans d'image les avis de sécurité de
+ses paquets `ssh`, jamais compilés ici. Résultat identique (mêmes paramètres :
+HMAC-SHA256, 20 000 itérations, 32 octets), vérifié par la suite de tests.

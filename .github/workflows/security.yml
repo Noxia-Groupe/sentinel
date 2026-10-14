@@ -1,0 +1,59 @@
+name: Vérifications et sécurité
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verifier:
+    name: Typecheck, lint, audit des dépendances
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx tsc --noEmit
+      - run: npx eslint .
+      # Bloquant : aucune vulnérabilité critique dans les dépendances de production.
+      - run: npm audit --omit=dev --audit-level=critical
+      # Informatif : les avis « high » restants (voir docs/audit-securite-2026-10-14.md).
+      - run: npm audit --omit=dev --audit-level=high
+        continue-on-error: true
+
+  image:
+    name: Image Docker, SBOM et scan de vulnérabilités
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Construction de l'image
+        run: docker build -t sentinel:ci .
+      # Trivy via son image officielle (pas d'action tierce à épingler) :
+      # inventaire SPDX de l'image, puis scan bloquant sur les vulnérabilités
+      # corrigeables critiques et élevées.
+      - name: SBOM (SPDX)
+        run: >-
+          docker run --rm
+          -v /var/run/docker.sock:/var/run/docker.sock
+          -v "$PWD:/work" -w /work
+          aquasec/trivy:latest image
+          --format spdx-json --output sentinel-sbom.spdx.json sentinel:ci
+      - name: Scan de l'image
+        run: >-
+          docker run --rm
+          -v /var/run/docker.sock:/var/run/docker.sock
+          aquasec/trivy:latest image
+          --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 sentinel:ci
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sentinel-sbom
+          path: sentinel-sbom.spdx.json
+          if-no-files-found: ignore

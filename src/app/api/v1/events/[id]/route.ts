@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireScope, apiError } from "@/lib/api/guard";
 import { getEvent, updateEvent, type EventUpdate } from "@/lib/alarm-service";
 import { EVENT_STATUSES, isEventStatus } from "@/lib/dahua/events";
+import { LIMITS, clip } from "@/lib/validate";
 
 // GET /api/v1/events/[id] — Alarme et sa main courante
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -35,15 +36,14 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
   const update: EventUpdate = {
     status: isEventStatus(body.status) ? body.status : undefined,
-    resolution: typeof body.resolution === "string" ? body.resolution : undefined,
+    resolution: typeof body.resolution === "string" ? body.resolution.trim().slice(0, LIMITS.comment) : undefined,
     assignedToId:
       body.assignedToId === null
         ? null
         : typeof body.assignedToId === "string"
           ? body.assignedToId
           : undefined,
-    comment:
-      typeof body.comment === "string" && body.comment.trim() ? body.comment.trim() : undefined,
+    comment: clip(body.comment, LIMITS.comment) ?? undefined,
   };
 
   if (!update.status && update.resolution === undefined && update.assignedToId === undefined && !update.comment) {

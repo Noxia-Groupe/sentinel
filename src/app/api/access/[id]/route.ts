@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireSuperadmin } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { recordAudit } from "@/lib/audit";
+import { LIMITS, clip } from "@/lib/validate";
 import {
   isAccessRole,
   isAccessStatus,
@@ -46,7 +47,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
   const status = isAccessStatus(body.status) ? body.status : undefined;
   const role = isAccessRole(body.role) ? body.role : undefined;
-  const note = typeof body.note === "string" ? body.note.trim() || null : undefined;
+  const note = typeof body.note === "string" ? clip(body.note, LIMITS.reason) : undefined;
 
   if (isSelf && ((status && status !== "authorized") || (role && role !== "superadmin"))) {
     return NextResponse.json(

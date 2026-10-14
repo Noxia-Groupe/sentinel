@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireUser } from "@/lib/session";
+import { requireOperator, requireUser } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { encrypt } from "@/lib/crypto";
 import { recordAudit } from "@/lib/audit";
+import { generateWebhookToken } from "@/lib/webhook-token";
+import { checkNvrHost } from "@/lib/nvr-address";
+import { LIMITS, clip, clipRequired, isCredentialType } from "@/lib/validate";
 
 type CredentialInput = { type?: string; username?: string; password?: string; label?: string };
 
@@ -43,14 +46,14 @@ export async function GET(req: NextRequest) {
 
 // POST /api/nvrs — Déclare un enregistreur
 export async function POST(req: NextRequest) {
-  const guard = await requireUser(req);
+  const guard = await requireOperator(req);
   if (!guard.ok) return guard.response;
 
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
-  const name = typeof body.name === "string" ? body.name.trim() : "";
+  const name = clipRequired(body.name, LIMITS.name);
   const connectionMode = body.connectionMode === "p2p" ? "p2p" : "ip";
-  const ip = typeof body.ip === "string" ? body.ip.trim() : "";
-  const p2pSerial = typeof body.p2pSerial === "string" ? body.p2pSerial.trim() : "";
+  const ip = clipRequired(body.ip, LIMITS.host);
+  const p2pSerial = clipRequired(body.p2pSerial, LIMITS.serial);
 
   if (!name) {
     return NextResponse.json({ error: "Le nom est requis" }, { status: 400 });
@@ -67,12 +70,24 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
+  if (connectionMode === "ip") {
+    const check = checkNvrHost(ip);
+    if (!check.ok) return NextResponse.json({ error: check.error }, { status: 400 });
+  }
 
   const credentials = Array.isArray(body.credentials)
     ? (body.credentials as CredentialInput[]).filter(
         (cred) => cred?.username && cred?.password && cred?.type,
       )
     : [];
+  for (const cred of credentials) {
+    if (!isCredentialType(cred.type)) {
+      return NextResponse.json({ error: `Type de compte inconnu : ${String(cred.type)}` }, { status: 400 });
+    }
+    if (String(cred.password).length > LIMITS.password) {
+      return NextResponse.json({ error: `Mot de passe trop long (${LIMITS.password} caractères maximum)` }, { status: 400 });
+    }
+  }
 
   const nvr = await prisma.nvr.create({
     data: {
@@ -83,18 +98,20 @@ export async function POST(req: NextRequest) {
       httpPort: toPort(body.httpPort, 80),
       rtspPort: toPort(body.rtspPort, 554),
       useHttps: body.useHttps === true,
-      serialNumber: asString(body.serialNumber),
+      serialNumber: clip(body.serialNumber, LIMITS.serial),
       connectionMode,
       p2pSerial: connectionMode === "p2p" ? p2pSerial : null,
-      model: asString(body.model),
-      location: asString(body.location),
-      notes: asString(body.notes),
+      model: clip(body.model, LIMITS.model),
+      location: clip(body.location, LIMITS.location),
+      notes: clip(body.notes, LIMITS.notes),
+      // Secret d'URL du webhook Dahua : aléa cryptographique, jamais un cuid.
+      webhookToken: generateWebhookToken(),
       credentials: {
         create: credentials.map((cred) => ({
           type: cred.type!,
-          username: cred.username!,
-          label: cred.label ?? null,
-          encryptedPassword: encrypt(cred.password!),
+          username: clipRequired(cred.username, LIMITS.username),
+          label: clip(cred.label, LIMITS.label),
+          encryptedPassword: encrypt(String(cred.password)),
         })),
       },
     },
@@ -113,10 +130,6 @@ export async function POST(req: NextRequest) {
   });
 
   return NextResponse.json(nvr, { status: 201 });
-}
-
-function asString(value: unknown): string | null {
-  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 function toPort(value: unknown, fallback: number): number {

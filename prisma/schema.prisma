@@ -39,7 +39,7 @@ model AccessEntry {
   id            String    @id @default(cuid())
   email         String    @unique // toujours en minuscules
   name          String?
-  role          String    @default("user") // "user" | "superadmin"
+  role          String    @default("operator") // "viewer" | "operator" | "admin" | "superadmin"
   status        String    @default("pending") // "authorized" | "banned" | "pending"
   note          String?
   addedBy       String?
@@ -118,6 +118,9 @@ model Nvr {
   httpPort       Int     @default(80)
   // true = l'API CGI est jointe en HTTPS (certificat auto-signé accepté)
   useHttps       Boolean @default(false)
+  // Empreinte SHA-256 du certificat vu au premier contact HTTPS ; tout
+  // changement est refusé tant qu'un administrateur ne la réinitialise pas.
+  tlsFingerprint String?
   // Port RTSP (vidéo en direct, flux secondaire)
   rtspPort       Int     @default(554)
   serialNumber   String? @unique
@@ -144,7 +147,9 @@ model Nvr {
   consecutiveFailures Int       @default(0)
   lastHealthCheckAt   DateTime?
 
-  webhookToken String   @unique @default(cuid())
+  // Secret d'URL du webhook Dahua, généré côté application
+  // (src/lib/webhook-token.ts) : 192 bits d'aléa, jamais un cuid prévisible.
+  webhookToken String   @unique
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 

@@ -58,6 +58,8 @@ import { ActionResult } from "./action-result";
 import { SupervisionPanel } from "./supervision-panel";
 import { LivePanel } from "./live-panel";
 import { LiveTrafficBadge, TrafficPanel } from "./traffic-panel";
+import { WebhookTokenPanel } from "./webhook-token-panel";
+import { useCan } from "@/components/role-context";
 import { P2pDiagnosticButton } from "./p2p-diagnostic";
 
 type Rights = {
@@ -110,6 +112,7 @@ type NvrDetail = {
   httpPort: number;
   rtspPort: number;
   useHttps: boolean;
+  tlsFingerprint: string | null;
   serialNumber: string | null;
   model: string | null;
   firmware: string | null;
@@ -171,6 +174,9 @@ export default function NvrDetailPage() {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
   const [revealed, setRevealed] = useState<Record<string, string>>({});
+  // Masque ce que l'API refuserait au rôle courant (la décision reste serveur).
+  const canOperate = useCan("operator");
+  const canAdmin = useCan("admin");
   const [addCredOpen, setAddCredOpen] = useState(false);
   const [newCred, setNewCred] = useState({ type: "telesurveilleur", username: "", password: "" });
   const [editOpen, setEditOpen] = useState(false);
@@ -277,10 +283,16 @@ export default function NvrDetailPage() {
     }
   };
 
-  const webhookUrl =
-    typeof window !== "undefined" && nvr
-      ? `${window.location.origin}/api/webhooks/dahua/${nvr.webhookToken}`
-      : "";
+  const resetTlsPin = async () => {
+    const res = await fetch(`/api/nvrs/${nvrId}/tls-pin`, { method: "DELETE" });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      toast.success("Empreinte TLS oubliée : le prochain contact épinglera le certificat présenté");
+      void fetchNvr();
+    } else {
+      toast.error(data.error ?? "Réinitialisation impossible");
+    }
+  };
 
   if (loading) {
     return (
@@ -335,17 +347,19 @@ export default function NvrDetailPage() {
           </Badge>
           <LiveTrafficBadge nvrId={nvrId} />
           {isP2p && <P2pDiagnosticButton nvrId={nvrId} />}
-          <Button
-            variant="outline"
-            onClick={() => setEditOpen(true)}
-            className="border-[#132255] bg-[#0a1130] text-[#dde1e4] hover:bg-[#132255]"
-          >
-            <Pencil className="h-4 w-4" />
-            Modifier
-          </Button>
+          {canOperate && (
+            <Button
+              variant="outline"
+              onClick={() => setEditOpen(true)}
+              className="border-[#132255] bg-[#0a1130] text-[#dde1e4] hover:bg-[#132255]"
+            >
+              <Pencil className="h-4 w-4" />
+              Modifier
+            </Button>
+          )}
           <Button
             onClick={() => void runTest()}
-            disabled={testing || unreachable}
+            disabled={testing || unreachable || !canOperate}
             className="bg-[#0251a1] hover:bg-[#0363c2]"
           >
             {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plug className="h-4 w-4" />}
@@ -431,6 +445,30 @@ export default function NvrDetailPage() {
                   <Info label="N° de série" value={nvr.serialNumber ?? "—"} mono />
                   <Info label="Modèle" value={nvr.model ?? "—"} />
                   <Info label="Firmware" value={nvr.firmware ?? "—"} mono />
+                  {nvr.useHttps && (
+                    <Info
+                      label="Certificat TLS épinglé"
+                      mono
+                      value={
+                        nvr.tlsFingerprint ? (
+                          <span className="inline-flex flex-wrap items-center gap-2">
+                            <span title={nvr.tlsFingerprint}>{nvr.tlsFingerprint.slice(0, 16)}…</span>
+                            {canAdmin && (
+                              <button
+                                type="button"
+                                onClick={() => void resetTlsPin()}
+                                className="text-xs text-[#8896b4] underline hover:text-[#dde1e4]"
+                              >
+                                réinitialiser
+                              </button>
+                            )}
+                          </span>
+                        ) : (
+                          "au prochain contact"
+                        )
+                      }
+                    />
+                  )}
                 </div>
                 <Info label="Emplacement" value={nvr.location ?? "—"} />
                 <Info
@@ -520,9 +558,11 @@ export default function NvrDetailPage() {
                 Tester tous les comptes
               </Button>
               <Dialog open={addCredOpen} onOpenChange={setAddCredOpen}>
-                <DialogTrigger className="inline-flex items-center gap-2 rounded-lg bg-[#0251a1] hover:bg-[#0363c2] text-white font-medium text-sm px-4 py-2 transition-all">
-                  Ajouter un compte
-                </DialogTrigger>
+                {canOperate && (
+                  <DialogTrigger className="inline-flex items-center gap-2 rounded-lg bg-[#0251a1] hover:bg-[#0363c2] text-white font-medium text-sm px-4 py-2 transition-all">
+                    Ajouter un compte
+                  </DialogTrigger>
+                )}
                 <DialogContent className="border-[#132255] bg-[#0d1537] text-[#dde1e4]">
                   <DialogHeader>
                     <DialogTitle>Ajouter un compte</DialogTitle>
@@ -628,18 +668,20 @@ export default function NvrDetailPage() {
                           <p className="text-[#8896b4] font-mono text-sm">
                             {revealed[cred.id] ?? "••••••••"}
                           </p>
-                          <button
-                            type="button"
-                            onClick={() => void revealPassword(cred.id)}
-                            className="text-[#8896b4] hover:text-[#dde1e4]"
-                            aria-label="Afficher le mot de passe"
-                          >
-                            {revealed[cred.id] ? (
-                              <EyeOff className="h-4 w-4" />
-                            ) : (
-                              <Eye className="h-4 w-4" />
-                            )}
-                          </button>
+                          {canAdmin && (
+                            <button
+                              type="button"
+                              onClick={() => void revealPassword(cred.id)}
+                              className="text-[#8896b4] hover:text-[#dde1e4]"
+                              aria-label="Afficher le mot de passe"
+                            >
+                              {revealed[cred.id] ? (
+                                <EyeOff className="h-4 w-4" />
+                              ) : (
+                                <Eye className="h-4 w-4" />
+                              )}
+                            </button>
+                          )}
                           {revealed[cred.id] && (
                             <button
                               type="button"
@@ -657,21 +699,23 @@ export default function NvrDetailPage() {
                         <Button
                           size="sm"
                           variant="outline"
-                          disabled={testing || unreachable}
+                          disabled={testing || unreachable || !canOperate}
                           onClick={() => void runTest(cred.id)}
                           className="border-[#132255] bg-[#080d24] text-[#dde1e4] hover:bg-[#132255]"
                         >
                           <Plug className="h-3.5 w-3.5" />
                           Tester
                         </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
-                          onClick={() => void deleteCredential(cred.id)}
-                        >
-                          Supprimer
-                        </Button>
+                        {canAdmin && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                            onClick={() => void deleteCredential(cred.id)}
+                          >
+                            Supprimer
+                          </Button>
+                        )}
                       </div>
                     </div>
 
@@ -685,12 +729,18 @@ export default function NvrDetailPage() {
 
         {/* Interventions */}
         <TabsContent value="actions">
-          <ActionsPanel nvrId={nvrId} disabled={unreachable} credentials={nvr.credentials} />
+          <ActionsPanel
+            nvrId={nvrId}
+            disabled={unreachable}
+            readOnly={!canOperate}
+            canControl={canAdmin}
+            credentials={nvr.credentials}
+          />
         </TabsContent>
 
         {/* Direct — une caméra, flux secondaire */}
         <TabsContent value="live">
-          <LivePanel nvrId={nvrId} disabled={unreachable} />
+          <LivePanel nvrId={nvrId} disabled={unreachable || !canOperate} />
         </TabsContent>
 
         {/* Supervision permanente */}
@@ -753,23 +803,14 @@ export default function NvrDetailPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label className="text-[#8896b4] text-xs">URL du webhook</Label>
-                <div className="flex items-center gap-2">
-                  <code className="flex-1 bg-[#080d24] border border-[#132255] rounded-md px-3 py-2 text-sm text-[#dde1e4] font-mono break-all">
-                    {webhookUrl}
-                  </code>
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    className="border-[#132255] text-[#8896b4]"
-                    onClick={() => copyToClipboard(webhookUrl, "URL du webhook")}
-                  >
-                    <Copy className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-              <AlarmCenterProvisioning nvrId={nvrId} disabled={unreachable} />
+              <WebhookTokenPanel
+                nvrId={nvrId}
+                token={nvr.webhookToken}
+                reachable={!unreachable}
+                canRotate={canAdmin}
+                onRotated={() => void fetchNvr()}
+              />
+              <AlarmCenterProvisioning nvrId={nvrId} disabled={unreachable} readOnly={!canAdmin} />
 
               <div className="bg-amber-500/5 border border-amber-500/10 rounded-lg p-4">
                 <p className="text-amber-400 text-sm font-medium mb-2">
@@ -919,16 +960,23 @@ function RightsPanel({ rights }: { rights: Rights }) {
 function ActionsPanel({
   nvrId,
   disabled,
+  readOnly,
+  canControl,
   credentials,
 }: {
   nvrId: string;
   disabled: boolean;
+  /** Rôle sans droit d'intervention : tout est grisé. */
+  readOnly: boolean;
+  /** Rôle administrateur : actions qui coupent, relancent ou reconfigurent. */
+  canControl: boolean;
   credentials: Credential[];
 }) {
   const [running, setRunning] = useState<string | null>(null);
   const [output, setOutput] = useState<{ action: string; data: unknown } | null>(null);
   const [credentialId, setCredentialId] = useState<string>("");
   const [confirmReboot, setConfirmReboot] = useState(false);
+  const locked = disabled || readOnly || running !== null;
 
   const execute = async (action: string, actionParams: Record<string, unknown> = {}) => {
     setRunning(action);
@@ -1011,7 +1059,7 @@ function ActionsPanel({
               <Button
                 key={button.action}
                 variant="outline"
-                disabled={disabled || running !== null}
+                disabled={locked}
                 onClick={() =>
                   void execute(button.action, button.action === "snapshot" ? { channel: 1 } : {})
                 }
@@ -1028,7 +1076,7 @@ function ActionsPanel({
 
             <Button
               variant="outline"
-              disabled={disabled || running !== null}
+              disabled={locked || !canControl}
               onClick={() => setConfirmReboot(true)}
               className="justify-start border-red-500/25 bg-red-500/5 text-red-400 hover:bg-red-500/10"
             >
@@ -1036,6 +1084,13 @@ function ActionsPanel({
               Redémarrer le NVR
             </Button>
           </div>
+
+          {readOnly && (
+            <p className="text-xs text-[#8896b4]">
+              Rôle « Lecture » : les interventions sont réservées aux opérateurs, et les actions
+              qui coupent ou reconfigurent l&apos;équipement aux administrateurs.
+            </p>
+          )}
 
           {disabled && (
             <p className="text-xs text-[#8896b4]">
@@ -1079,7 +1134,7 @@ function ActionsPanel({
               action={output.action}
               data={output.data}
               onAction={(action, actionParams) => void execute(action, actionParams)}
-              busy={running !== null}
+              busy={running !== null || !canControl}
             />
           </CardContent>
         </Card>
@@ -1132,7 +1187,16 @@ type AlarmCenterOutcome = {
  * Déclare SENTINEL comme destination d'alarme directement dans la
  * configuration du NVR, sans passer par son interface web.
  */
-function AlarmCenterProvisioning({ nvrId, disabled }: { nvrId: string; disabled: boolean }) {
+function AlarmCenterProvisioning({
+  nvrId,
+  disabled,
+  readOnly,
+}: {
+  nvrId: string;
+  disabled: boolean;
+  /** Réservé aux administrateurs : réécrit la configuration de l'équipement. */
+  readOnly: boolean;
+}) {
   const [scheme, setScheme] = useState<"https" | "http">("https");
   const [busy, setBusy] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<AlarmCenterOutcome | null>(null);
@@ -1211,7 +1275,7 @@ function AlarmCenterProvisioning({ nvrId, disabled }: { nvrId: string; disabled:
         <Button
           size="sm"
           variant="outline"
-          disabled={disabled || busy !== null}
+          disabled={disabled || readOnly || busy !== null}
           onClick={() => void readCurrent()}
           className="border-[#132255] bg-[#0a1130] text-[#dde1e4] hover:bg-[#132255]"
         >
@@ -1222,7 +1286,7 @@ function AlarmCenterProvisioning({ nvrId, disabled }: { nvrId: string; disabled:
         <Button
           size="sm"
           variant="outline"
-          disabled={disabled || busy !== null}
+          disabled={disabled || readOnly || busy !== null}
           onClick={() => void provision(true)}
           className="border-[#132255] bg-[#0a1130] text-[#dde1e4] hover:bg-[#132255]"
         >
@@ -1231,7 +1295,7 @@ function AlarmCenterProvisioning({ nvrId, disabled }: { nvrId: string; disabled:
 
         <Button
           size="sm"
-          disabled={disabled || busy !== null}
+          disabled={disabled || readOnly || busy !== null}
           onClick={() => setConfirmOpen(true)}
           className="bg-[#0251a1] hover:bg-[#0363c2]"
         >
@@ -1241,6 +1305,13 @@ function AlarmCenterProvisioning({ nvrId, disabled }: { nvrId: string; disabled:
           Déclarer SENTINEL
         </Button>
       </div>
+
+      {readOnly && (
+        <p className="text-xs text-[#8896b4]">
+          Réservé aux administrateurs : cette opération réécrit la configuration de
+          l&apos;enregistreur.
+        </p>
+      )}
 
       {disabled && (
         <p className="text-xs text-[#8896b4]">

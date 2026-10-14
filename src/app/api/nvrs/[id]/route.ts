@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireUser } from "@/lib/session";
+import { requireAdmin, requireOperator, requireUser } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { recordAudit } from "@/lib/audit";
 import { isReachable } from "@/lib/dahua/service";
 import { p2pStatus } from "@/lib/dahua/p2p";
+import { checkNvrHost } from "@/lib/nvr-address";
+import { LIMITS, clip } from "@/lib/validate";
+
+const NVR_STATUSES = new Set(["unknown", "online", "offline"]);
 
 // GET /api/nvrs/[id] — Détail d'un enregistreur
 //
@@ -72,33 +76,38 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
 // PUT /api/nvrs/[id] — Met à jour un enregistreur
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requireUser(req);
+  const guard = await requireOperator(req);
   if (!guard.ok) return guard.response;
 
   const { id } = await params;
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
 
+  if (typeof body.ip === "string" && body.ip.trim()) {
+    const check = checkNvrHost(body.ip);
+    if (!check.ok) return NextResponse.json({ error: check.error }, { status: 400 });
+  }
+
   const nvr = await prisma.nvr.update({
     where: { id },
     data: {
-      ...(typeof body.name === "string" && body.name.trim() ? { name: body.name.trim() } : {}),
+      ...(clip(body.name, LIMITS.name) ? { name: clip(body.name, LIMITS.name)! } : {}),
       ...(body.clientId !== undefined
         ? { clientId: typeof body.clientId === "string" && body.clientId ? body.clientId : null }
         : {}),
-      ...(body.ip !== undefined ? { ip: asString(body.ip) } : {}),
+      ...(body.ip !== undefined ? { ip: clip(body.ip, LIMITS.host) } : {}),
       ...(body.port !== undefined ? { port: toPort(body.port, 37777) } : {}),
       ...(body.httpPort !== undefined ? { httpPort: toPort(body.httpPort, 80) } : {}),
       ...(body.rtspPort !== undefined ? { rtspPort: toPort(body.rtspPort, 554) } : {}),
       ...(typeof body.useHttps === "boolean" ? { useHttps: body.useHttps } : {}),
-      ...(body.serialNumber !== undefined ? { serialNumber: asString(body.serialNumber) } : {}),
-      ...(body.model !== undefined ? { model: asString(body.model) } : {}),
-      ...(body.location !== undefined ? { location: asString(body.location) } : {}),
-      ...(body.notes !== undefined ? { notes: asString(body.notes) } : {}),
-      ...(typeof body.status === "string" ? { status: body.status } : {}),
+      ...(body.serialNumber !== undefined ? { serialNumber: clip(body.serialNumber, LIMITS.serial) } : {}),
+      ...(body.model !== undefined ? { model: clip(body.model, LIMITS.model) } : {}),
+      ...(body.location !== undefined ? { location: clip(body.location, LIMITS.location) } : {}),
+      ...(body.notes !== undefined ? { notes: clip(body.notes, LIMITS.notes) } : {}),
+      ...(typeof body.status === "string" && NVR_STATUSES.has(body.status) ? { status: body.status } : {}),
       ...(body.connectionMode === "ip" || body.connectionMode === "p2p"
         ? { connectionMode: body.connectionMode }
         : {}),
-      ...(body.p2pSerial !== undefined ? { p2pSerial: asString(body.p2pSerial) } : {}),
+      ...(body.p2pSerial !== undefined ? { p2pSerial: clip(body.p2pSerial, LIMITS.serial) } : {}),
     },
   });
 
@@ -114,7 +123,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
 // DELETE /api/nvrs/[id] — Supprime un enregistreur et son historique
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requireUser(req);
+  const guard = await requireAdmin(req);
   if (!guard.ok) return guard.response;
 
   const { id } = await params;
@@ -128,10 +137,6 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   });
 
   return NextResponse.json({ success: true });
-}
-
-function asString(value: unknown): string | null {
-  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 function toPort(value: unknown, fallback: number): number {

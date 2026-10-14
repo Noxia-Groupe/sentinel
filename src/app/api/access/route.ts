@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireSuperadmin } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { recordAudit } from "@/lib/audit";
+import { LIMITS, clip } from "@/lib/validate";
 import {
+  DEFAULT_ROLE,
   bootstrapSuperadmins,
   isAccessRole,
   isBootstrapSuperadmin,
@@ -47,9 +49,9 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const role = isAccessRole(body.role) ? body.role : "user";
-  const name = typeof body.name === "string" && body.name.trim() ? body.name.trim() : undefined;
-  const note = typeof body.note === "string" && body.note.trim() ? body.note.trim() : undefined;
+  const role = isAccessRole(body.role) ? body.role : DEFAULT_ROLE;
+  const name = clip(body.name, LIMITS.name) ?? undefined;
+  const note = clip(body.note, LIMITS.reason) ?? undefined;
 
   // Une adresse déjà présente (tentative en attente, ou bannie) est autorisée
   // explicitement : c'est l'intention du superadmin qui la déclare.
