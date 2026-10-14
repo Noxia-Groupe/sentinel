@@ -40,6 +40,6 @@
     "prisma": "^7.9.1",
     "shadcn": "^4.16.0",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^7"
   }
 }
