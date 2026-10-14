@@ -11,7 +11,7 @@ FROM node:22-alpine AS base
 #
 # Dépendances Go figées sous vendor/ : build hermétique, sans accès réseau.
 # CGO désactivé → binaire statique, indépendant de la libc de l'image finale.
-FROM golang:1.25-alpine AS p2p-builder
+FROM golang:1.27-alpine AS p2p-builder
 WORKDIR /build
 COPY vendor/dh-fwd/ ./
 RUN CGO_ENABLED=0 go build -mod=vendor -trimpath -ldflags="-s -w" -o /usr/local/bin/dh-fwd .
@@ -46,6 +46,11 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # outils système ; Node utilise de toute façon ses propres données de fuseaux.
 # ffmpeg : direct vidéo (flux secondaire RTSP retransmis en MJPEG).
 RUN apk add --no-cache postgresql-client tzdata ffmpeg
+
+# Le serveur standalone n'a besoin que de `node` : npm, npx et corepack (et
+# leurs dépendances, régulièrement visées par des avis de sécurité) sortent de
+# l'image finale.
+RUN rm -rf /usr/local/lib/node_modules /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
 
 # Utilitaire de tunnel P2P, joignable via le défaut DAHUA_P2P_HELPER.
 COPY --from=p2p-builder /usr/local/bin/dh-fwd /usr/local/bin/dh-fwd

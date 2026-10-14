@@ -6,6 +6,7 @@ import (
 	"crypto/cipher"
 	"crypto/hmac"
 	"crypto/md5"
+	"crypto/pbkdf2"
 	"crypto/rand"
 	"crypto/sha1"
 	"crypto/sha256"
@@ -21,8 +22,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"golang.org/x/crypto/pbkdf2"
 )
 
 // Cloud endpoints and stock client credentials (public, embedded in every
@@ -48,7 +47,8 @@ var (
 // ---------------------------------------------------------------------------
 
 // getDeriveKey builds the 32-char uppercase-hex MD5 master key:
-//   MD5(user + ":Login to " + salt + ":" + pass), rendered as ASCII hex.
+//
+//	MD5(user + ":Login to " + salt + ":" + pass), rendered as ASCII hex.
 func getDeriveKey(username, password, randsalt string) []byte {
 	salt := randsalt
 	if salt == "" {
@@ -67,9 +67,19 @@ func getNonce() int {
 }
 
 // deriveDK expands the master key: PBKDF2-HMAC-SHA256(key, decimal(nonce), 20000, 32).
+//
+// SENTINEL vendor patch: uses the standard library's crypto/pbkdf2 (Go 1.24+)
+// instead of golang.org/x/crypto/pbkdf2, so the binary no longer embeds the
+// x/crypto module (whose ssh packages, unused here, carry known CVEs that
+// image scanners flag by module version).
 func deriveDK(key []byte, nonce int) []byte {
 	salt := []byte(strconv.Itoa(nonce))
-	return pbkdf2.Key(key, salt, 20000, 32, sha256.New)
+	dk, err := pbkdf2.Key(sha256.New, string(key), salt, 20000, 32)
+	if err != nil {
+		// Constant, valid parameters: an error here can only be a toolchain bug.
+		panic("pbkdf2: " + err.Error())
+	}
+	return dk
 }
 
 // getEnc encrypts LocalAddr with AES-256-OFB over the derived key and the
