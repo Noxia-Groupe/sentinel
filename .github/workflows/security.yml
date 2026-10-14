@@ -33,25 +33,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          load: true
-          tags: sentinel:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Construction de l'image
+        run: docker build -t sentinel:ci .
+      # Trivy via son image officielle (pas d'action tierce à épingler) :
+      # inventaire SPDX de l'image, puis scan bloquant sur les vulnérabilités
+      # corrigeables critiques et élevées.
       - name: SBOM (SPDX)
-        uses: anchore/sbom-action@v0
+        run: >-
+          docker run --rm
+          -v /var/run/docker.sock:/var/run/docker.sock
+          -v "$PWD:/work" -w /work
+          aquasec/trivy:latest image
+          --format spdx-json --output sentinel-sbom.spdx.json sentinel:ci
+      - name: Scan de l'image
+        run: >-
+          docker run --rm
+          -v /var/run/docker.sock:/var/run/docker.sock
+          aquasec/trivy:latest image
+          --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 sentinel:ci
+      - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          image: sentinel:ci
-          artifact-name: sentinel-sbom.spdx.json
-          output-file: sentinel-sbom.spdx.json
-      - name: Scan de l'image (vulnérabilités corrigeables, critiques et élevées)
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          image-ref: sentinel:ci
-          format: table
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          exit-code: "1"
+          name: sentinel-sbom
+          path: sentinel-sbom.spdx.json
+          if-no-files-found: ignore
