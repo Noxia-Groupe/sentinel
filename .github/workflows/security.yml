@@ -13,7 +13,7 @@ jobs:
     name: Typecheck, lint, audit des dépendances
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -32,7 +32,7 @@ jobs:
     name: Image Docker, SBOM et scan de vulnérabilités
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Construction de l'image
         run: docker build -t sentinel:ci .
       # Trivy via son image officielle (pas d'action tierce à épingler) :
