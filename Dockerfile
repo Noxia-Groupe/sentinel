@@ -1,6 +1,6 @@
 # syntax=docker.io/docker/dockerfile:1
 
-FROM node:22-alpine AS base
+FROM node:25-alpine AS base
 
 # --- Tunnel P2P Dahua ---------------------------------------------------------
 # Compile l'utilitaire `dh-fwd` (vendoré sous vendor/dh-fwd, licence MIT) qui
