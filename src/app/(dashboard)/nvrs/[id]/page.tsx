@@ -58,6 +58,7 @@ import { ActionResult } from "./action-result";
 import { SupervisionPanel } from "./supervision-panel";
 import { LivePanel } from "./live-panel";
 import { LiveTrafficBadge, TrafficPanel } from "./traffic-panel";
+import { WebhookTokenPanel } from "./webhook-token-panel";
 import { P2pDiagnosticButton } from "./p2p-diagnostic";
 
 type Rights = {
@@ -276,11 +277,6 @@ export default function NvrDetailPage() {
       void fetchNvr();
     }
   };
-
-  const webhookUrl =
-    typeof window !== "undefined" && nvr
-      ? `${window.location.origin}/api/webhooks/dahua/${nvr.webhookToken}`
-      : "";
 
   if (loading) {
     return (
@@ -753,22 +749,12 @@ export default function NvrDetailPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label className="text-[#8896b4] text-xs">URL du webhook</Label>
-                <div className="flex items-center gap-2">
-                  <code className="flex-1 bg-[#080d24] border border-[#132255] rounded-md px-3 py-2 text-sm text-[#dde1e4] font-mono break-all">
-                    {webhookUrl}
-                  </code>
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    className="border-[#132255] text-[#8896b4]"
-                    onClick={() => copyToClipboard(webhookUrl, "URL du webhook")}
-                  >
-                    <Copy className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
+              <WebhookTokenPanel
+                nvrId={nvrId}
+                token={nvr.webhookToken}
+                reachable={!unreachable}
+                onRotated={() => void fetchNvr()}
+              />
               <AlarmCenterProvisioning nvrId={nvrId} disabled={unreachable} />
 
               <div className="bg-amber-500/5 border border-amber-500/10 rounded-lg p-4">

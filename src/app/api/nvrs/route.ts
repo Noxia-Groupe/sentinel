@@ -3,6 +3,7 @@ import { requireUser } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { encrypt } from "@/lib/crypto";
 import { recordAudit } from "@/lib/audit";
+import { generateWebhookToken } from "@/lib/webhook-token";
 
 type CredentialInput = { type?: string; username?: string; password?: string; label?: string };
 
@@ -89,6 +90,8 @@ export async function POST(req: NextRequest) {
       model: asString(body.model),
       location: asString(body.location),
       notes: asString(body.notes),
+      // Secret d'URL du webhook Dahua : aléa cryptographique, jamais un cuid.
+      webhookToken: generateWebhookToken(),
       credentials: {
         create: credentials.map((cred) => ({
           type: cred.type!,

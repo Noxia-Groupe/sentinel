@@ -118,6 +118,25 @@ https://sentinel.noxia-groupe.fr/api/webhooks/dahua/<webhookToken>
 Cette route est publique par conception (le token fait office
 d'authentification) ; toutes les autres routes exigent une session ou une clé.
 
+Le token est un secret de **192 bits** généré par la plateforme à la création
+de l'enregistreur. Il se régénère depuis l'onglet *Webhook* de la fiche
+(bouton ↻, ou `POST /api/nvrs/{id}/webhook-token`) : la nouvelle adresse est
+écrite sur l'enregistreur **avant** que l'ancienne URL ne soit invalidée, et le
+token est conservé si cette écriture échoue. Les tokens créés avant
+octobre 2026 (format `cuid`, en partie prévisible) sont signalés par un
+avertissement sur la fiche : les régénérer dès que l'équipement est joignable.
+
+Trois garde-fous protègent cet endpoint public (réglables, voir
+`.env.example`) :
+
+- un token mal formé ou inconnu reçoit un 404, et au plus
+  `WEBHOOK_UNKNOWN_TOKEN_RATE_LIMIT` tentatives par minute et par adresse IP
+  (20 par défaut) — la recherche du token par force brute est impraticable ;
+- un enregistreur ne peut pas dépasser `WEBHOOK_RATE_LIMIT` appels par minute
+  (120 par défaut, battements de cœur compris) : au-delà, 429 avec `Retry-After` ;
+- le corps est limité à `WEBHOOK_MAX_BODY_BYTES` (64 Ko par défaut) : au-delà,
+  413, sans lecture complète ni écriture en base.
+
 ### Provisionnement automatique
 
 Il n'y a rien à saisir sur l'enregistreur : depuis l'onglet *Webhook* d'un NVR,
@@ -652,6 +671,14 @@ y compris après résolution DNS au moment de l'envoi.
 - Sentinel se connecte aux adresses IP déclarées dans l'inventaire : ces
   équipements étant sur des réseaux privés ou des VPN, l'ajout d'un
   enregistreur reste une opération réservée aux utilisateurs authentifiés.
+- Le webhook Dahua, seule route sans session, est protégé par un token
+  aléatoire de 192 bits, une limitation de débit par enregistreur et par IP,
+  et une taille de corps bornée — voir *Centralisation des alarmes*.
+- L'adresse IP consignée dans l'audit (et utilisée pour la limitation par IP)
+  vient de `X-Real-IP`, posé par le reverse proxy, ou à défaut de la dernière
+  valeur de `X-Forwarded-For` : un client ne peut pas la forger.
+- Un audit de sécurité complet, avec le plan de remédiation par paliers, est
+  dans `docs/audit-securite-2026-10-14.md`.
 
 ## Développement
 
@@ -685,3 +712,30 @@ façon **idempotente** (`IF NOT EXISTS`, contraintes ajoutées sous condition).
 
 Le service applicatif n'expose aucun port : il est publié par Nginx Proxy
 Manager via le réseau externe `nginx-proxy`.
+
+### Réglages conseillés dans Nginx Proxy Manager
+
+Sur l'hôte proxy de Sentinel : *Force SSL*, *HTTP/2*, *HSTS* et *Block Common
+Exploits* activés. Dans l'onglet *Advanced*, ces directives doublent les
+protections applicatives et retirent une route inutilisée :
+
+```nginx
+# Webhook Dahua : corps borné et débit limité par adresse (la zone se déclare
+# dans la configuration http de NPM : /data/nginx/custom/http_top.conf
+#   limit_req_zone $binary_remote_addr zone=sentinel_webhook:10m rate=10r/s;)
+location /api/webhooks/ {
+    client_max_body_size 64k;
+    limit_req zone=sentinel_webhook burst=20 nodelay;
+    # proxy.conf de NPM : en-têtes X-Real-IP / X-Forwarded-For et proxy_pass
+    # vers l'hôte déclaré — ne pas ajouter de proxy_pass en plus.
+    include conf.d/include/proxy.conf;
+}
+
+# L'optimiseur d'images Next.js n'est pas utilisé par Sentinel.
+location /_next/image {
+    return 404;
+}
+```
+
+`X-Real-IP` et `X-Forwarded-For` sont posés par NPM : ne pas les désactiver,
+Sentinel s'en sert pour le journal d'audit et la limitation par IP.

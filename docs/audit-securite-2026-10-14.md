@@ -350,3 +350,21 @@ Compléter avec https://www.ssllabs.com/ssltest/ (viser A+) et https://securityh
 | **P2** | Schémas `zod`, validation de `ENCRYPTION_KEY` au démarrage, versionnage des chiffrés, plafonds d'opérations P2P, durcissement des webhooks sortants | V17, V18, V19 | 1–2 j |
 
 Après P0 : note estimée **68 / 100**. Après P0 + P1 : **82 / 100**. Après P2 : **85–90 / 100**.
+
+---
+
+## 8. Corrections appliquées — palier P0 (14 octobre 2026)
+
+| Constat | Correction livrée |
+|---|---|
+| V1 | Next.js `16.2.12` → `16.4.1` (et `eslint-config-next`), `npm audit fix` (undici `7.30`, proxy-addr `2.0.8`, fast-uri, nanoid, qs…). Les CLI `prisma` et `shadcn` passent en `devDependencies` : elles ne servent qu'au build (le conteneur final embarque le bundle standalone). `npm audit --omit=dev` passe de 25 à **4 avis**, tous dans la chaîne de la CLI `prisma` (`mysql2`, pilote MySQL jamais chargé ; `deepmerge-ts` via `@prisma/config`), que npm garde dans le périmètre de production parce que `@prisma/client` la déclare en dépendance *peer* optionnelle. Aucun de ces modules n'est présent dans le bundle d'exécution ; le seul « correctif » proposé par npm est une rétrogradation en Prisma 6, à écarter. À réévaluer à la prochaine version de Prisma 7. |
+| V1 / V20 | `next.config.ts` : `poweredByHeader: false`, `images.unoptimized: true` (l'optimiseur `/_next/image`, visé par les avis RCE/SSRF, n'était pas utilisé). |
+| V2 | `src/app/api/webhooks/dahua/[token]/route.ts` : jeton mal formé rejeté avant toute requête en base ; **20 tentatives/min par IP** sur jeton inconnu (`WEBHOOK_UNKNOWN_TOKEN_RATE_LIMIT`) ; **120 appels/min par enregistreur** (`WEBHOOK_RATE_LIMIT`), réponse 429 avec `Retry-After` ; corps borné à **64 Ko** (`WEBHOOK_MAX_BODY_BYTES`), lecture interrompue dès le dépassement, réponse 413. Limiteur réutilisable dans `src/lib/rate-limit.ts`. |
+| V2 / V15 | `requestIp` (`src/lib/actor.ts`) lit désormais `X-Real-IP` (posé par le proxy) puis la **dernière** valeur de `X-Forwarded-For` : la limitation par IP et le journal d'audit ne sont plus contournables par un en-tête forgé. |
+| V4 | Nouveau module `src/lib/webhook-token.ts` : jeton de **192 bits** (`crypto.randomBytes(24)`, base64url) généré par l'application à la création d'un enregistreur ; `@default(cuid())` retiré du schéma (aucune migration SQL : la colonne ne change pas). Route `POST /api/nvrs/[id]/webhook-token` : la nouvelle adresse est écrite sur l'enregistreur **avant** d'invalider l'ancienne, le jeton est conservé si l'écriture échoue ; `provision: false` pour une reconfiguration manuelle. Onglet *Webhook* de la fiche : bouton de régénération avec confirmation, et avertissement sur les jetons historiques (format cuid). |
+
+**Écart par rapport au rapport.** Les jetons existants ne sont pas régénérés automatiquement au déploiement : chaque rotation réécrit la configuration de l'enregistreur, ce qui suppose qu'il soit joignable à cet instant (les NVR en P2P ne le sont pas toujours). Une régénération en masse aurait coupé la remontée d'alarmes des équipements injoignables. L'interface signale chaque jeton ancien, et la rotation se fait enregistreur par enregistreur, avec réécriture automatique. La réponse 404 sur jeton inconnu est conservée (diagnostic d'une URL mal copiée) : la limitation par IP suffit à rendre la force brute impraticable.
+
+**Reste à faire côté infrastructure (hors dépôt)** : dans Nginx Proxy Manager, `limit_req` sur `/api/webhooks/`, `client_max_body_size 64k` sur cette location, `location /_next/image { return 404; }`, HSTS. Les extraits sont dans le README, section *Déploiement*.
+
+**Note estimée après P0 : 68 / 100.** Les paliers P1 (rôles, validation des adresses NVR, sessions, en-têtes, réseau interne) et P2 restent à traiter.

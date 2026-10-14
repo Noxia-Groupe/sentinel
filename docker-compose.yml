@@ -51,6 +51,12 @@ services:
       # Mode relais P2P (1 = actif) pour les équipements derrière un NAT qui
       # bloque la connexion directe. Laisser vide pour la connexion directe.
       DAHUA_P2P_RELAY: ${DAHUA_P2P_RELAY:-}
+      # Garde-fous du webhook Dahua (public) : appels/min par enregistreur,
+      # tentatives/min par IP avec un jeton inconnu, taille maximale du corps.
+      # Vide = valeurs par défaut (120, 20, 65536).
+      WEBHOOK_RATE_LIMIT: ${WEBHOOK_RATE_LIMIT:-}
+      WEBHOOK_UNKNOWN_TOKEN_RATE_LIMIT: ${WEBHOOK_UNKNOWN_TOKEN_RATE_LIMIT:-}
+      WEBHOOK_MAX_BODY_BYTES: ${WEBHOOK_MAX_BODY_BYTES:-}
     networks:
       - nginx-proxy
 

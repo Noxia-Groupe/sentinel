@@ -3,6 +3,14 @@ import { prisma } from "@/lib/prisma";
 import { normalizeEvent } from "@/lib/dahua/events";
 import { emitAlarmCreated, emitNvrStatus } from "@/lib/outbound-webhooks";
 import { recordTraffic } from "@/lib/traffic";
+import { requestIp } from "@/lib/actor";
+import {
+  envInt,
+  webhookTokenLimiter,
+  webhookUnknownLimiter,
+  type RateLimitResult,
+} from "@/lib/rate-limit";
+import { isWellFormedWebhookToken } from "@/lib/webhook-token";
 
 /**
  * Réception des événements Alarm Center.
@@ -12,11 +20,23 @@ import { recordTraffic } from "@/lib/traffic";
  * indifféremment en GET (query string) ou en POST (JSON, formulaire, texte) :
  * les deux verbes sont acceptés et la charge utile est fusionnée avec les
  * paramètres d'URL avant normalisation.
+ *
+ * Garde-fous, l'endpoint étant exposé sans session :
+ * - jeton mal formé ou inconnu : 404, et au plus N tentatives par minute et
+ *   par adresse IP (`WEBHOOK_UNKNOWN_TOKEN_RATE_LIMIT`) — la recherche du
+ *   jeton par force brute devient impraticable ;
+ * - jeton valide : au plus N appels par minute et par enregistreur
+ *   (`WEBHOOK_RATE_LIMIT`), battements de cœur compris ;
+ * - corps limité à `WEBHOOK_MAX_BODY_BYTES` (64 Ko par défaut) : 413 au-delà,
+ *   sans lecture complète ni écriture en base.
  */
 
 // Fenêtre pendant laquelle une alarme identique non traitée est regroupée
 // plutôt que dupliquée — sans cela, une détection de mouvement noie le flux.
 const DEDUPE_WINDOW_MS = Number(process.env.DAHUA_DEDUPE_WINDOW_SECONDS ?? 60) * 1000;
+
+/** Taille maximale du corps d'une notification. */
+const MAX_BODY_BYTES = envInt("WEBHOOK_MAX_BODY_BYTES", 64 * 1024);
 
 // Événements de pure supervision : ils prouvent que le lien est vivant mais
 // n'ont pas à apparaître dans le centre d'alarme.
@@ -54,22 +74,51 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ token: string }
   return outcome.response;
 }
 
+function tooManyRequests(rate: RateLimitResult): NextResponse {
+  return NextResponse.json(
+    { error: "Trop de requêtes", retryAfter: rate.retryAfter },
+    { status: 429, headers: { "Retry-After": String(rate.retryAfter) } },
+  );
+}
+
 async function receive(
   req: NextRequest,
   { params }: { params: Promise<{ token: string }> },
 ): Promise<{ response: NextResponse; nvrId?: string; bodyBytes: number }> {
   const { token } = await params;
 
-  const nvr = await prisma.nvr.findUnique({
-    where: { webhookToken: token },
-    select: { id: true, status: true },
-  });
+  const nvr = isWellFormedWebhookToken(token)
+    ? await prisma.nvr.findUnique({
+        where: { webhookToken: token },
+        select: { id: true, status: true },
+      })
+    : null;
 
   if (!nvr) {
+    // Jeton mal formé ou inconnu : même réponse dans les deux cas, et
+    // limitation par adresse pour rendre la force brute impraticable.
+    const rate = webhookUnknownLimiter.check(requestIp(req) ?? "inconnue");
+    if (!rate.allowed) return { response: tooManyRequests(rate), bodyBytes: 0 };
     return { response: NextResponse.json({ error: "NVR non trouvé" }, { status: 404 }), bodyBytes: 0 };
   }
 
-  const { payload, bodyBytes } = await readPayload(req);
+  const rate = webhookTokenLimiter.check(nvr.id);
+  if (!rate.allowed) {
+    return { response: tooManyRequests(rate), nvrId: nvr.id, bodyBytes: declaredLength(req) };
+  }
+
+  const read = await readPayload(req);
+  if (!read.ok) {
+    return {
+      response: NextResponse.json(
+        { error: `Corps trop volumineux (maximum ${MAX_BODY_BYTES} octets)` },
+        { status: 413 },
+      ),
+      nvrId: nvr.id,
+      bodyBytes: read.bodyBytes,
+    };
+  }
+  const { payload, bodyBytes } = read;
   const reply = (response: NextResponse) => ({ response, nvrId: nvr.id, bodyBytes });
   const normalized = normalizeEvent(payload);
 
@@ -130,10 +179,50 @@ async function receive(
   return reply(NextResponse.json({ success: true, stored: true, event }));
 }
 
-/** Lit le corps et le fusionne avec les paramètres d'URL en un seul objet. */
-async function readPayload(req: NextRequest): Promise<{ payload: Record<string, unknown>; bodyBytes: number }> {
-  const raw = req.method === "GET" ? "" : await req.text();
-  return { payload: parsePayload(req, raw), bodyBytes: Buffer.byteLength(raw) };
+/** Taille annoncée par `Content-Length`, 0 si absente ou invalide. */
+function declaredLength(req: NextRequest): number {
+  const value = Number(req.headers.get("content-length"));
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+type ReadOutcome =
+  | { ok: true; payload: Record<string, unknown>; bodyBytes: number }
+  | { ok: false; bodyBytes: number };
+
+/** Lit le corps (borné) et le fusionne avec les paramètres d'URL en un seul objet. */
+async function readPayload(req: NextRequest): Promise<ReadOutcome> {
+  if (req.method === "GET") return { ok: true, payload: parsePayload(req, ""), bodyBytes: 0 };
+
+  const declared = declaredLength(req);
+  if (declared > MAX_BODY_BYTES) return { ok: false, bodyBytes: declared };
+
+  const raw = await readBounded(req, MAX_BODY_BYTES);
+  if (raw === null) return { ok: false, bodyBytes: MAX_BODY_BYTES };
+
+  return { ok: true, payload: parsePayload(req, raw), bodyBytes: Buffer.byteLength(raw) };
+}
+
+/**
+ * Lit le corps en s'arrêtant dès que la limite est dépassée (`null` dans ce
+ * cas) : un envoi en `chunked` sans `Content-Length` ne peut pas contourner
+ * la limite, et rien n'est accumulé au-delà.
+ */
+async function readBounded(req: NextRequest, max: number): Promise<string | null> {
+  const reader = req.body?.getReader();
+  if (!reader) return "";
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > max) {
+      await reader.cancel().catch(() => undefined);
+      return null;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 function parsePayload(req: NextRequest, raw: string): Record<string, unknown> {
